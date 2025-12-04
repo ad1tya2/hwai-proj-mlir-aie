@@ -67,6 +67,40 @@ run: all
 perf: all
 	./$(host_target) -i ${dot_insts_target} -x ${dot_xclbin_target} -k MLIR_AIE --iters 100 --verify false --warmup 10
 
+# Optimized targets
+mlir_aie_dot_opt?=build/aie_dot_opt.mlir
+dot_opt_xclbin_target?=build/dot_opt.xclbin
+dot_opt_insts_target?=build/dot_opt_insts.bin
+host_opt_target?=build/test_opt
+
+dot_opt_py=dot_optimized.py
+
+${mlir_aie_dot_opt}: ${srcdir}/${dot_opt_py}
+	mkdir -p ${@D}
+	python3 $< -d ${DEVICE} --size 2560 > $@
+
+${dot_opt_xclbin_target}: ${mlir_aie_dot_opt} build/dot.o
+	mkdir -p ${@D}
+	cd ${@D} && aiecc.py -v --aie-generate-xclbin --no-compile-host --xclbin-name=${@F} \
+				--no-xchesscc --no-xbridge \
+				--aie-generate-npu-insts --npu-insts-name=${dot_opt_insts_target:build/%=%} ${<:%=../%}
+
+${host_opt_target}: ${srcdir}/test_optimized.cpp ${dot_opt_xclbin_target}
+	mkdir -p ${@D}
+	${CXX} ${XRT_FLAGS} ${UTILS_INCLUDE} ${UTILS_LIB}  -o $@ $< ${XRT_LIBS}
+
+.PHONY: perf_optimized
+perf_optimized: ${dot_opt_xclbin_target} ${host_opt_target}
+	@echo "Running perf for size 2560"
+	./$(host_opt_target) -i ${dot_opt_insts_target} -x ${dot_opt_xclbin_target} -k MLIR_AIE --size 2560 --iters 100 --verify true --warmup 10
+	
+	@echo "Running perf for size 6912 (Rebuilding MLIR for 6912)"
+	python3 ${srcdir}/${dot_opt_py} -d ${DEVICE} --size 6912 > build/aie_dot_opt_6912.mlir
+	cd build && aiecc.py -v --aie-generate-xclbin --no-compile-host --xclbin-name=dot_opt_6912.xclbin \
+				--no-xchesscc --no-xbridge \
+				--aie-generate-npu-insts --npu-insts-name=dot_opt_insts_6912.bin ../build/aie_dot_opt_6912.mlir
+	./$(host_opt_target) -i build/dot_opt_insts_6912.bin -x build/dot_opt_6912.xclbin -k MLIR_AIE --size 6912 --iters 100 --verify true --warmup 10
+
 .PHONY: clean
 clean:
 	-rm -rf build
