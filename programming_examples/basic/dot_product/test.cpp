@@ -98,6 +98,10 @@ int main(int argc, const char *argv[]) {
   xrt::hw_context context(device, xclbin.get_uuid());
   auto kernel = xrt::kernel(context, kernelName);
 
+  auto bo_instr = xrt::bo(device, instr_v.size() * sizeof(int), XCL_BO_FLAGS_CACHEABLE, kernel.group_id(1));
+  void *bufInstr = bo_instr.map<void *>();
+  memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
+
   int num_jobs = 4;
   std::vector<xrt::bo> bo_in0_v, bo_in1_v, bo_out_v;
   std::vector<INOUT_DATATYPE*> bufIn0_v, bufIn1_v, bufOut_v;
