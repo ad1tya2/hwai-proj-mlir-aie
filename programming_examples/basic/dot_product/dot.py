@@ -38,15 +38,15 @@ def my_dot_product(dev, kernel_size):
     
     # Define tensor types
     # Input 1: uint8
-    tensor_in1_ty = np.ndarray[(num_elements // 4,), np.dtype(np.uint8)]
+    tensor_in1_ty = np.ndarray[(num_elements // 4,), np.dtype[np.uint8]]
     # Input 2: int8
-    tensor_in2_ty = np.ndarray[(num_elements,), np.dtype(np.int8)]
+    tensor_in2_ty = np.ndarray[(num_elements,), np.dtype[np.int8]]
     # Output: float32
-    tensor_out_ty = np.ndarray[(num_columns,), np.dtype(np.float32)]
+    tensor_out_ty = np.ndarray[(num_columns,), np.dtype[np.float32]]
     
-    tile_in1_ty = np.ndarray[(chunk_in_1,), np.dtype(np.uint8)]
-    tile_in2_ty = np.ndarray[(chunk_in_2,), np.dtype(np.int8)]
-    tile_out_ty = np.ndarray[(1,), np.dtype(np.float32)]
+    tile_in1_ty = np.ndarray[(chunk_in_1,), np.dtype[np.uint8]]
+    tile_in2_ty = np.ndarray[(chunk_in_2,), np.dtype[np.int8]]
+    tile_out_ty = np.ndarray[(1,), np.dtype[np.float32]]
 
     # AIE-array data movement with object fifos
     of_in1s = [ObjectFifo(tile_in1_ty, name=f"in1_{i}") for i in range(num_columns)]
