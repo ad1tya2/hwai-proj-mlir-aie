@@ -230,18 +230,13 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     aie::vector<uint8_t, 32> w2_u;
     aie::vector<uint8_t, 32> w3_u;
 
-    // Optimized unpacking using AIE intrinsics
-    // w0_u = (v_packed >> 6) & 0x3
-    w0_u = aie::bit_and(aie::logical_downshift(v_packed, 6), mask);
-    
-    // w1_u = (v_packed >> 4) & 0x3
-    w1_u = aie::bit_and(aie::logical_downshift(v_packed, 4), mask);
-    
-    // w2_u = (v_packed >> 2) & 0x3
-    w2_u = aie::bit_and(aie::logical_downshift(v_packed, 2), mask);
-    
-    // w3_u = (v_packed >> 0) & 0x3
-    w3_u = aie::bit_and(v_packed, mask);
+    for(int k=0; k<32; k++) {
+        uint8_t val = v_packed[k];
+        w0_u[k] = (val >> 6) & 0x3;
+        w1_u[k] = (val >> 4) & 0x3;
+        w2_u[k] = (val >> 2) & 0x3;
+        w3_u[k] = (val >> 0) & 0x3;
+    }
 
     // Cast to int8
     aie::vector<int8_t, 32> w0 = aie::vector_cast<int8_t>(w0_u);
