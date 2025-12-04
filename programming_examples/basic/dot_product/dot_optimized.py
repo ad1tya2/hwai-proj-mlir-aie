@@ -87,22 +87,27 @@ def my_dot_optimized(dev, num_elements, trace_size):
     # For a simple 1D split:
     
     # --- L2 ObjectFifos ---
-    # We need L2 tiles to perform split/join (distribute/gather)
+    # We define these as the main buffers. 
+    # rt.fill will write to them (Shim -> L2)
+    # rt.drain will read from them (L2 -> Shim)
+    # split/join will operate on them (L2 <-> L1)
     
-    # out0 L2 on Tile(0, 1)
+    # in1 L2
+    of_in1_L2 = ObjectFifo(tile_in_ty, name="in1_L2")
+    
+    # in2 L2
+    of_in2_L2 = ObjectFifo(tile_in_ty, name="in2_L2")
+    
+    # out0 L2
     of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2")
     
-    # out1 L2 on Tile(1, 1)
+    # out1 L2
     of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
 
-    # Connect L3 to L2
-    # in1 -> in1_L2
-    # We use .cons().forward() to create L2 and link in runtime
-    
-    of_in1_L2 = of_in1.cons().forward(tile_in_ty, name="in1_L2", placement=Tile(0, 1))
-    of_in2_L2 = of_in2.cons().forward(tile_in_ty, name="in2_L2", placement=Tile(1, 1))
+    # --- Split/Join ---
     
     # in1 consumers (split from L2)
+    # We place the split operation on Tile(0, 1)
     of_in1_cons = of_in1_L2.cons().split(
         [tile_size * i for i in range(num_tiles)], 
         obj_types=[tile_in_ty] * num_tiles,
@@ -111,6 +116,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     )
     
     # in2 consumers (split from L2)
+    # We place the split operation on Tile(1, 1)
     of_in2_cons = of_in2_L2.cons().split(
         [tile_size * i for i in range(num_tiles)],
         obj_types=[tile_in_ty] * num_tiles,
@@ -119,6 +125,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     )
     
     # out0 producers (join to L2)
+    # We place the join operation on Tile(0, 1)
     of_out0_L2_prod = of_out0_L2.prod().join(
         [1 * i for i in range(4)], 
         obj_types=[tile_out_ty] * 4,
@@ -127,30 +134,13 @@ def my_dot_optimized(dev, num_elements, trace_size):
     )
     
     # out1 producers (join to L2)
+    # We place the join operation on Tile(1, 1)
     of_out1_L2_prod = of_out1_L2.prod().join(
         [1 * i for i in range(4)],
         obj_types=[tile_out_ty] * 4,
         names=[f"out1_prod_{i}" for i in range(4)],
         placement=Tile(1, 1)
     )
-    
-    # Link L2 to Shim for output
-    # out0_L2 -> out0
-    # We need to connect of_out0_L2.cons() to of_out0.prod()?
-    # Actually of_out0 is the Shim buffer.
-    # We can say of_out0 consumes of_out0_L2?
-    # No, of_out0 is defined as a FIFO.
-    # We can use .forward() to link L2 to Shim.
-    # But of_out0 was defined as the Shim FIFO.
-    # Let's redefine of_out0 as the result of forwarding from L2.
-    # But we need the Shim FIFO object for rt.drain.
-    
-    # Correct pattern:
-    # of_out0_shim = of_out0_L2.cons().forward(tile_out_ty, name="out0_shim", placement=Tile(0, 0))
-    # And use of_out0_shim in rt.drain.
-    
-    of_out0_shim = of_out0_L2.cons().forward(tile_out_ty, name="out0_shim", placement=Tile(0, 0))
-    of_out1_shim = of_out1_L2.cons().forward(tile_out_ty, name="out1_shim", placement=Tile(1, 0))
 
     def core_body(in1, in2, out, kernel_func):
         # Process 1 chunk
@@ -196,17 +186,17 @@ def my_dot_optimized(dev, num_elements, trace_size):
         rt.start(*workers)
         tg = rt.task_group()
         
-        # Fill in1 (A)
-        rt.fill(of_in1.prod(), A, tap_in1, task_group=tg, placement=Tile(0, 0))
+        # Fill in1 (A) -> L2
+        rt.fill(of_in1_L2.prod(), A, tap_in1, task_group=tg, placement=Tile(0, 0))
         
-        # Fill in2 (B)
-        rt.fill(of_in2.prod(), B, tap_in2, task_group=tg, placement=Tile(1, 0))
+        # Fill in2 (B) -> L2
+        rt.fill(of_in2_L2.prod(), B, tap_in2, task_group=tg, placement=Tile(1, 0))
         
-        # Drain out0 (C0)
-        rt.drain(of_out0_shim.cons(), C0, tap_out0, wait=True, task_group=tg, placement=Tile(0, 0))
+        # Drain out0 (C0) <- L2
+        rt.drain(of_out0_L2.cons(), C0, tap_out0, wait=True, task_group=tg, placement=Tile(0, 0))
         
-        # Drain out1 (C1)
-        rt.drain(of_out1_shim.cons(), C1, tap_out1, wait=True, task_group=tg, placement=Tile(1, 0))
+        # Drain out1 (C1) <- L2
+        rt.drain(of_out1_L2.cons(), C1, tap_out1, wait=True, task_group=tg, placement=Tile(1, 0))
         
         rt.finish_task_group(tg)
 
