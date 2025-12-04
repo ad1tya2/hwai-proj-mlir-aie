@@ -127,12 +127,25 @@ int main(int argc, const char *argv[]) {
 
   unsigned num_iter = n_iterations + n_warmup_iterations;
   
+  double min_exec_time = std::numeric_limits<double>::max();
+  double max_exec_time = 0;
+  double total_exec_time = 0;
+
   for (unsigned iter = 0; iter < num_iter; iter++) {
+      auto start = std::chrono::high_resolution_clock::now();
       auto run = kernel(3, bo_instr, instr_v.size(), bo_in0, bo_in1, bo_out);
       run.wait();
+      auto end = std::chrono::high_resolution_clock::now();
       
       if (iter < n_warmup_iterations) continue;
       
+      std::chrono::duration<double, std::micro> duration = end - start;
+      double exec_time = duration.count();
+      
+      total_exec_time += exec_time;
+      min_exec_time = std::min(min_exec_time, exec_time);
+      max_exec_time = std::max(max_exec_time, exec_time);
+
       bo_out.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
       memcpy(CVec.data(), bufOut, OUTPUT_SIZE);
       
@@ -142,10 +155,23 @@ int main(int argc, const char *argv[]) {
               std::cout << "Verification failed with " << err << " errors." << std::endl;
               return 1;
           } else {
-              std::cout << "Verification passed." << std::endl;
+              if (verbosity > 0) std::cout << "Verification passed." << std::endl;
           }
       }
   }
+
+  double avg_exec_time = total_exec_time / n_iterations;
+  std::cout << "Performance Results:" << std::endl;
+  std::cout << "  Average Time: " << avg_exec_time << " us" << std::endl;
+  std::cout << "  Min Time:     " << min_exec_time << " us" << std::endl;
+  std::cout << "  Max Time:     " << max_exec_time << " us" << std::endl;
+  
+  // Calculate MACs: 65536 elements * 1 MAC/element = 65536 MACs per run
+  // GFLOPS = (MACs * 2) / (Time in seconds * 1e9)  (Assuming 2 ops per MAC: mul + add)
+  // Or just GOPS.
+  double ops = (double)INPUT_VOLUME * 2.0; // 2 ops per element (mul + add)
+  double avg_gops = (ops / (avg_exec_time * 1e-6)) / 1e9;
+  std::cout << "  Throughput:   " << avg_gops << " GOPS" << std::endl;
   
   std::cout << "PASS!" << std::endl;
   return 0;
