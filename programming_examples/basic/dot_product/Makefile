@@ -61,7 +61,7 @@ ${host_target}: ${srcdir}/test.cpp ${dot_xclbin_target}
 
 .PHONY: run
 run: all
-	./$(host_target) -i ${dot_insts_target} -x ${dot_xclbin_target} -k dot_product_int32_scalar
+	./$(host_target) -i ${dot_insts_target} -x ${dot_xclbin_target} -k MLIR_AIE
 
 .PHONY: clean
 clean:

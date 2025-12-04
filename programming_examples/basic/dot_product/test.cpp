@@ -80,10 +80,19 @@ int main(int argc, const char *argv[]) {
   std::string Node = vm["kernel"].as<std::string>();
   
   auto xkernels = xclbin.get_kernels();
-  auto xkernel = *std::find_if(xkernels.begin(), xkernels.end(),
+  auto xkernel_it = std::find_if(xkernels.begin(), xkernels.end(),
                                [Node](xrt::xclbin::kernel &k) {
                                  return k.get_name().rfind(Node, 0) == 0;
                                });
+  if (xkernel_it == xkernels.end()) {
+    std::cerr << "Error: Kernel '" << Node << "' not found in xclbin." << std::endl;
+    std::cerr << "Available kernels:" << std::endl;
+    for (auto &k : xkernels) {
+      std::cerr << "  " << k.get_name() << std::endl;
+    }
+    return 1;
+  }
+  auto xkernel = *xkernel_it;
   auto kernelName = xkernel.get_name();
   device.register_xclbin(xclbin);
   xrt::hw_context context(device, xclbin.get_uuid());
