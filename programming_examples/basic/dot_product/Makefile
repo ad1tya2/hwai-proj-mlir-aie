@@ -151,3 +151,9 @@ ${dot_lib_xclbin_target}: ${srcdir}/${dot_py} build/dot.o
 .PHONY: clean
 clean:
 	-rm -rf build libdot.so
+
+# Test Shared Library
+.PHONY: test_lib
+test_lib: lib
+	$(CXX) -ggdb -o lib_test $(srcdir)/lib_test.cpp -ldl -lpthread
+	./lib_test
