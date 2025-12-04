@@ -121,10 +121,13 @@ int main(int argc, const char *argv[]) {
   int trace_size = vm["trace_sz"].as<int>();
   int vector_size = vm["size"].as<int>();
 
-  std::cout << "Running test.cpp with 4 columns" << std::endl;
-
-  // 4 columns
+  // 4 columns per kernel
   int num_columns = 4;
+  // 5 concurrent kernels
+  int num_jobs = 5;
+  
+  std::cout << "Running test.cpp with " << num_jobs << " concurrent jobs, " << num_columns << " columns each." << std::endl;
+
   int INPUT_VOLUME = vector_size; 
   // Output: 1 element per column
   int OUTPUT_VOLUME_PER_COL = 1;
@@ -171,32 +174,42 @@ int main(int argc, const char *argv[]) {
   size_t TOTAL_INPUT_SIZE_B = TOTAL_INPUT_VOLUME * sizeof(INOUT_DATATYPE_B);
   size_t TOTAL_OUTPUT_SIZE = TOTAL_OUTPUT_VOLUME * sizeof(INOUT_DATATYPE_C);
 
-  auto bo_inA = xrt::bo(device, TOTAL_INPUT_SIZE_A, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-  auto bo_inB = xrt::bo(device, TOTAL_INPUT_SIZE_B, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
-  auto bo_outC = xrt::bo(device, TOTAL_OUTPUT_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
-
-  INOUT_DATATYPE_A *bufInA = bo_inA.map<INOUT_DATATYPE_A *>();
-  INOUT_DATATYPE_B *bufInB = bo_inB.map<INOUT_DATATYPE_B *>();
-  INOUT_DATATYPE_C *bufOutC = bo_outC.map<INOUT_DATATYPE_C *>();
-
-  // Prepare data
-  // Generate random float weights and quantize them
-  std::vector<float> weights_float(TOTAL_INPUT_VOLUME);
-  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) weights_float[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+  // Vectors for multiple jobs
+  std::vector<xrt::bo> bo_inA_v, bo_inB_v, bo_outC_v;
+  std::vector<INOUT_DATATYPE_A*> bufInA_v;
+  std::vector<INOUT_DATATYPE_B*> bufInB_v;
+  std::vector<INOUT_DATATYPE_C*> bufOutC_v;
   
-  quantize_i2_s_ref(weights_float.data(), bufInA, TOTAL_INPUT_VOLUME);
+  // Store data for verification per job
+  std::vector<std::vector<float>> weights_float_v(num_jobs);
+  std::vector<std::vector<int8_t>> activations_v(num_jobs);
 
-  // Generate random int8 activations
-  std::vector<int8_t> activations(TOTAL_INPUT_VOLUME);
-  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) activations[i] = (int8_t)(rand() % 20 - 10);
-  memcpy(bufInB, activations.data(), TOTAL_INPUT_SIZE_B);
+  for(int j=0; j<num_jobs; j++) {
+      bo_inA_v.push_back(xrt::bo(device, TOTAL_INPUT_SIZE_A, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3)));
+      bo_inB_v.push_back(xrt::bo(device, TOTAL_INPUT_SIZE_B, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4)));
+      bo_outC_v.push_back(xrt::bo(device, TOTAL_OUTPUT_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5)));
+      
+      bufInA_v.push_back(bo_inA_v[j].map<INOUT_DATATYPE_A *>());
+      bufInB_v.push_back(bo_inB_v[j].map<INOUT_DATATYPE_B *>());
+      bufOutC_v.push_back(bo_outC_v[j].map<INOUT_DATATYPE_C *>());
+      
+      // Prepare data
+      weights_float_v[j].resize(TOTAL_INPUT_VOLUME);
+      for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) weights_float_v[j][i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+      quantize_i2_s_ref(weights_float_v[j].data(), bufInA_v[j], TOTAL_INPUT_VOLUME);
 
-  memset(bufOutC, 0, TOTAL_OUTPUT_SIZE);
+      activations_v[j].resize(TOTAL_INPUT_VOLUME);
+      for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) activations_v[j][i] = (int8_t)(rand() % 20 - 10);
+      memcpy(bufInB_v[j], activations_v[j].data(), TOTAL_INPUT_SIZE_B);
+
+      memset(bufOutC_v[j], 0, TOTAL_OUTPUT_SIZE);
+      
+      bo_inA_v[j].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+      bo_inB_v[j].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+      bo_outC_v[j].sync(XCL_BO_SYNC_BO_TO_DEVICE);
+  }
 
   bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-  bo_inA.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-  bo_inB.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-  bo_outC.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
   unsigned num_iter = n_iterations + n_warmup_iterations;
   
@@ -205,9 +218,17 @@ int main(int argc, const char *argv[]) {
   double total_exec_time = 0;
 
   for (unsigned iter = 0; iter < num_iter; iter++) {
+      std::vector<xrt::run> runs;
       auto start = std::chrono::high_resolution_clock::now();
-      auto run = kernel(3, bo_instr, instr_v.size(), bo_inA, bo_inB, bo_outC);
-      run.wait();
+      
+      for(int j=0; j<num_jobs; j++) {
+          runs.push_back(kernel(3, bo_instr, instr_v.size(), bo_inA_v[j], bo_inB_v[j], bo_outC_v[j]));
+      }
+      
+      for(int j=0; j<num_jobs; j++) {
+          runs[j].wait();
+      }
+      
       auto end = std::chrono::high_resolution_clock::now();
       
       if (iter < n_warmup_iterations) continue;
@@ -219,39 +240,43 @@ int main(int argc, const char *argv[]) {
       min_exec_time = std::min(min_exec_time, exec_time);
       max_exec_time = std::max(max_exec_time, exec_time);
 
-      bo_outC.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-      
       if (do_verify) {
-          int errors = 0;
-          for(int col=0; col<num_columns; col++) {
-              float total_sum = bufOutC[col];
-              float ref_sum = 0;
+          for(int j=0; j<num_jobs; j++) {
+              bo_outC_v[j].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
               
-              // Calculate ref sum for this column
-              int offset = col * INPUT_VOLUME;
-              int offset_packed = col * (INPUT_VOLUME / 4);
-              
-              ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, 0, bufInA + offset_packed, 0, activations.data() + offset, 0, 0);
-              
-              if (std::abs(total_sum - ref_sum) > 1e-3) {
-                  std::cout << "Verification failed for column " << col << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
-                  errors++;
+              int errors = 0;
+              for(int col=0; col<num_columns; col++) {
+                  float total_sum = bufOutC_v[j][col];
+                  float ref_sum = 0;
+                  
+                  // Calculate ref sum for this column
+                  int offset = col * INPUT_VOLUME;
+                  int offset_packed = col * (INPUT_VOLUME / 4);
+                  
+                  ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, 0, bufInA_v[j] + offset_packed, 0, activations_v[j].data() + offset, 0, 0);
+                  
+                  if (std::abs(total_sum - ref_sum) > 1e-3) {
+                      std::cout << "Verification failed for job " << j << " column " << col << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
+                      errors++;
+                  }
               }
+              if (errors > 0) return 1;
           }
-          if (errors > 0) return 1;
-          if (verbosity > 0) std::cout << "Verification passed." << std::endl;
+          if (verbosity > 0) std::cout << "Verification passed for all jobs." << std::endl;
       }
   }
 
   double avg_exec_time = total_exec_time / n_iterations;
-  std::cout << "Performance Results (Size " << vector_size << ", 4 Columns):" << std::endl;
-  std::cout << "  Average Time: " << avg_exec_time << " us" << std::endl;
-  std::cout << "  Min Time:     " << min_exec_time << " us" << std::endl;
-  std::cout << "  Max Time:     " << max_exec_time << " us" << std::endl;
+  std::cout << "Performance Results (Size " << vector_size << ", " << num_columns << " Columns, " << num_jobs << " Concurrent Jobs):" << std::endl;
+  std::cout << "  Average Batch Time: " << avg_exec_time << " us" << std::endl;
+  std::cout << "  Min Batch Time:     " << min_exec_time << " us" << std::endl;
+  std::cout << "  Max Batch Time:     " << max_exec_time << " us" << std::endl;
   
-  double ops = (double)TOTAL_INPUT_VOLUME * 2.0;
-  double avg_gops = (ops / (avg_exec_time * 1e-6)) / 1e9;
-  std::cout << "  Throughput:   " << avg_gops << " GOPS" << std::endl;
+  // Total throughput = num_jobs * ops per job
+  double ops_per_job = (double)TOTAL_INPUT_VOLUME * 2.0;
+  double total_ops = ops_per_job * num_jobs;
+  double avg_gops = (total_ops / (avg_exec_time * 1e-6)) / 1e9;
+  std::cout << "  Total Throughput:   " << avg_gops << " GOPS" << std::endl;
   
   std::cout << "PASS!" << std::endl;
   return 0;
