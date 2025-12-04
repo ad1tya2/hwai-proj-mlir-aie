@@ -40,37 +40,60 @@ def my_dot_optimized(dev, num_elements, trace_size):
     tile_in_ty = np.ndarray[(tile_size,), np.dtype[dtype]]
     tile_out_ty = np.ndarray[(1,), np.dtype[dtype]]
 
-    # --- Object FIFOs ---
-    # We define the main L2 buffers. The placer will assign them to MemTiles.
+    # --- Object FIFOs & Routing ---
     # We use separate FIFOs for inputs and outputs to avoid channel exhaustion on a single tile.
+    # We use a daisy-chain topology for inputs: Shim -> L2_0 -> L2_1 -> Workers
     
-    # in1 L2 (feeds workers 0-3)
-    of_in1_L2 = ObjectFifo(tile_in_ty, name="in1_L2")
+    # --- Input 1 (in1) ---
+    # in1 L2 primary (feeds workers 0-3 and forwards to secondary)
+    of_in1_L2_0 = ObjectFifo(tile_in_ty, name="in1_L2_0")
     
-    # in2 L2 (feeds workers 4-7)
-    of_in2_L2 = ObjectFifo(tile_in_ty, name="in2_L2")
+    # Split L2_0: 4 chunks for local workers, 1 chunk for forwarding
+    of_in1_L2_0_cons = of_in1_L2_0.cons().split(
+        [tile_size * 0, tile_size * 1, tile_size * 2, tile_size * 3, tile_size * 4],
+        obj_types=[tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty, np.ndarray[(4*tile_size,), np.dtype(dtype)]],
+        names=[f"in1_w{i}" for i in range(4)] + ["in1_fwd"]
+    )
+    in1_w0_3 = of_in1_L2_0_cons[0:4]
+    in1_fwd = of_in1_L2_0_cons[4]
+    
+    # Forward to secondary L2
+    of_in1_L2_1 = in1_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
+    
+    # Split L2_1: 4 chunks for workers 4-7
+    in1_w4_7 = of_in1_L2_1.cons().split(
+        [tile_size * i for i in range(4)],
+        obj_types=[tile_in_ty] * 4,
+        names=[f"in1_w{i}" for i in range(4, 8)]
+    )
+
+    # --- Input 2 (in2) ---
+    # in2 L2 primary (feeds workers 0-3 and forwards to secondary)
+    of_in2_L2_0 = ObjectFifo(tile_in_ty, name="in2_L2_0")
+    
+    # Split L2_0: 4 chunks for local workers, 1 chunk for forwarding
+    of_in2_L2_0_cons = of_in2_L2_0.cons().split(
+        [tile_size * 0, tile_size * 1, tile_size * 2, tile_size * 3, tile_size * 4],
+        obj_types=[tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty, np.ndarray[(4*tile_size,), np.dtype(dtype)]],
+        names=[f"in2_w{i}" for i in range(4)] + ["in2_fwd"]
+    )
+    in2_w0_3 = of_in2_L2_0_cons[0:4]
+    in2_fwd = of_in2_L2_0_cons[4]
+    
+    # Forward to secondary L2
+    of_in2_L2_1 = in2_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
+    
+    # Split L2_1: 4 chunks for workers 4-7
+    in2_w4_7 = of_in2_L2_1.cons().split(
+        [tile_size * i for i in range(4)],
+        obj_types=[tile_in_ty] * 4,
+        names=[f"in2_w{i}" for i in range(4, 8)]
+    )
+
+    # --- Outputs ---
     
     # out0 L2 (collects from workers 0-3)
     of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2")
-    
-    # out1 L2 (collects from workers 4-7)
-    of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
-
-    # --- Routing ---
-    
-    # in1 consumers (split from L2 to 4 workers)
-    of_in1_cons = of_in1_L2.cons().split(
-        [tile_size * i for i in range(4)], 
-        obj_types=[tile_in_ty] * 4,
-        names=[f"in1_cons_{i}" for i in range(4)]
-    )
-    
-    # in2 consumers (split from L2 to 4 workers)
-    of_in2_cons = of_in2_L2.cons().split(
-        [tile_size * i for i in range(4)],
-        obj_types=[tile_in_ty] * 4,
-        names=[f"in2_cons_{i}" for i in range(4)]
-    )
     
     # out0 producers (join to L2 from 4 workers)
     of_out0_L2_prod = of_out0_L2.prod().join(
@@ -78,6 +101,9 @@ def my_dot_optimized(dev, num_elements, trace_size):
         obj_types=[tile_out_ty] * 4,
         names=[f"out0_prod_{i}" for i in range(4)]
     )
+    
+    # out1 L2 (collects from workers 4-7)
+    of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
     
     # out1 producers (join to L2 from 4 workers)
     of_out1_L2_prod = of_out1_L2.prod().join(
@@ -103,123 +129,14 @@ def my_dot_optimized(dev, num_elements, trace_size):
         out.release(1)
 
     workers = []
-    # Create workers for Group 0 (fed by in1, out to out0)
-    for i in range(4):
-        workers.append(Worker(
-            core_body,
-            [of_in1_cons[i].cons(), of_in2_cons[i].cons(), of_out0_L2_prod[i].prod(), dot_kernel]
-        ))
-        
-    # Create workers for Group 1 (fed by in1? No, wait.
-    # The original design had in1 distributed to ALL 8 tiles.
-    # And in2 distributed to ALL 8 tiles.
-    # My simplified topology above splits in1 to workers 0-3 and in2 to workers 4-7.
-    # THIS IS WRONG.
-    # The dot product needs in1 AND in2 at EVERY tile.
-    # in1 is Vector A. in2 is Vector B.
-    # Every tile computes a partial dot product of a chunk of A and B.
-    # So in1 must go to ALL 8 tiles.
-    # in2 must go to ALL 8 tiles.
-    
-    # Correction:
-    # in1 -> L2 -> split to 8 workers?
-    # If I split to 8 workers from 1 L2, I need 8 output channels. Limit is 6.
-    # So I MUST use 2 L2 tiles for in1 (to distribute to 8).
-    # And 2 L2 tiles for in2 (to distribute to 8).
-    
-    # So I need the 4-MemTile logic for inputs?
-    # Or I can use 2 L2 tiles for in1: L2_A -> L2_B -> workers?
-    # L2_A feeds 4 workers. L2_B feeds 4 workers.
-    # Shim -> L2_A -> L2_B.
-    
-    # Let's define:
-    # in1_L2_0 (feeds workers 0-3)
-    # in1_L2_1 (feeds workers 4-7)
-    # Shim -> in1_L2_0 -> in1_L2_1
-    
-    # in2_L2_0 (feeds workers 0-3)
-    # in2_L2_1 (feeds workers 4-7)
-    # Shim -> in2_L2_0 -> in2_L2_1
-    
-    # This seems viable and avoids explicit placement.
-    
-    # Redefining ObjectFifos:
-    
-    # in1 chain
-    of_in1_L2_0 = ObjectFifo(tile_in_ty, name="in1_L2_0")
-    of_in1_L2_1 = of_in1_L2_0.cons().forward(tile_in_ty, name="in1_L2_1")
-    
-    # in2 chain
-    of_in2_L2_0 = ObjectFifo(tile_in_ty, name="in2_L2_0")
-    of_in2_L2_1 = of_in2_L2_0.cons().forward(tile_in_ty, name="in2_L2_1")
-    
-    # out0 (collects from 0-3)
-    of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2")
-    
-    # out1 (collects from 4-7)
-    of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
-    
-    # Splits
-    # in1_L2_0 splits to 4 workers (0-3) AND forwards to in1_L2_1?
-    # forward() creates a consumer.
-    # So in1_L2_0 has 5 consumers: 4 workers + 1 L2.
-    # 1 input + 5 outputs = 6 channels. This fits exactly (limit 6).
-    
-    # in1_L2_0 consumers
-    # We need to be careful with split() and forward().
-    # If I use split(), I define all consumers.
-    # One of them should be the forward connection.
-    
-    of_in1_L2_0_cons = of_in1_L2_0.cons().split(
-        [tile_size * 0, tile_size * 1, tile_size * 2, tile_size * 3, tile_size * 4],
-        obj_types=[tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty, np.ndarray[(4*tile_size,), np.dtype(dtype)]],
-        names=[f"in1_w{i}" for i in range(4)] + ["in1_fwd"]
-    )
-    in1_w0_3 = of_in1_L2_0_cons[0:4]
-    in1_fwd = of_in1_L2_0_cons[4]
-    
-    # Link fwd to in1_L2_1
-    # We already defined of_in1_L2_1 as forward of of_in1_L2_0.
-    # But we need to link the specific split output to it.
-    # IRON's forward() usually takes the parent FIFO.
-    # If I use split, I get handles.
-    # Can I create an ObjectFifo from a handle?
-    # `of_in1_L2_1 = in1_fwd.forward(...)`?
-    # Yes, forward() is a method on ObjectFifoHandle.
-    
-    of_in1_L2_1 = in1_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
-    
-    # in1_L2_1 splits to 4 workers (4-7)
-    in1_w4_7 = of_in1_L2_1.cons().split(
-        [tile_size * i for i in range(4)],
-        obj_types=[tile_in_ty] * 4,
-        names=[f"in1_w{i}" for i in range(4, 8)]
-    )
-    
-    # Same for in2
-    of_in2_L2_0_cons = of_in2_L2_0.cons().split(
-        [tile_size * 0, tile_size * 1, tile_size * 2, tile_size * 3, tile_size * 4],
-        obj_types=[tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty, np.ndarray[(4*tile_size,), np.dtype(dtype)]],
-        names=[f"in2_w{i}" for i in range(4)] + ["in2_fwd"]
-    )
-    in2_w0_3 = of_in2_L2_0_cons[0:4]
-    in2_fwd = of_in2_L2_0_cons[4]
-    
-    of_in2_L2_1 = in2_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
-    
-    in2_w4_7 = of_in2_L2_1.cons().split(
-        [tile_size * i for i in range(4)],
-        obj_types=[tile_in_ty] * 4,
-        names=[f"in2_w{i}" for i in range(4, 8)]
-    )
-    
-    # Workers
-    workers = []
+    # Create workers for Group 0 (fed by in1_L2_0, in2_L2_0, out to out0)
     for i in range(4):
         workers.append(Worker(
             core_body,
             [in1_w0_3[i].cons(), in2_w0_3[i].cons(), of_out0_L2_prod[i].prod(), dot_kernel]
         ))
+        
+    # Create workers for Group 1 (fed by in1_L2_1, in2_L2_1, out to out1)
     for i in range(4):
         workers.append(Worker(
             core_body,
