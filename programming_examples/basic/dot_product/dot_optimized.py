@@ -50,17 +50,17 @@ def my_dot_optimized(dev, num_elements, trace_size):
     
     # Input A (in1) on Shim 0 (Tile 0, 0)
     # Distributed to all 8 tiles
-    of_in1 = ObjectFifo(tile_in_ty, name="in1", placement=Tile(0, 0))
+    of_in1 = ObjectFifo(tile_in_ty, name="in1")
     
     # Input B (in2) on Shim 1 (Tile 1, 0)
     # Distributed to all 8 tiles
-    of_in2 = ObjectFifo(tile_in_ty, name="in2", placement=Tile(1, 0))
+    of_in2 = ObjectFifo(tile_in_ty, name="in2")
     
     # Output 0 on Shim 0 (Tile 0, 0) - Collects from Col 0 tiles
-    of_out0 = ObjectFifo(tile_out_ty, name="out0", placement=Tile(0, 0))
+    of_out0 = ObjectFifo(tile_out_ty, name="out0")
     
     # Output 1 on Shim 1 (Tile 1, 0) - Collects from Col 1 tiles
-    of_out1 = ObjectFifo(tile_out_ty, name="out1", placement=Tile(1, 0))
+    of_out1 = ObjectFifo(tile_out_ty, name="out1")
 
     # --- Kernel ---
     dot_kernel = Kernel(
@@ -168,16 +168,16 @@ def my_dot_optimized(dev, num_elements, trace_size):
         tg = rt.task_group()
         
         # Fill in1 (A)
-        rt.fill(of_in1.prod(), A, tap_in1, task_group=tg)
+        rt.fill(of_in1.prod(), A, tap_in1, task_group=tg, placement=Tile(0, 0))
         
         # Fill in2 (B)
-        rt.fill(of_in2.prod(), B, tap_in2, task_group=tg)
+        rt.fill(of_in2.prod(), B, tap_in2, task_group=tg, placement=Tile(1, 0))
         
         # Drain out0 (C0)
-        rt.drain(of_out0.cons(), C0, tap_out0, wait=True, task_group=tg)
+        rt.drain(of_out0.cons(), C0, tap_out0, wait=True, task_group=tg, placement=Tile(0, 0))
         
         # Drain out1 (C1)
-        rt.drain(of_out1.cons(), C1, tap_out1, wait=True, task_group=tg)
+        rt.drain(of_out1.cons(), C1, tap_out1, wait=True, task_group=tg, placement=Tile(1, 0))
         
         rt.finish_task_group(tg)
 
