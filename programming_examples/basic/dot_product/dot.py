@@ -97,7 +97,7 @@ def my_dot_product(dev, kernel_size):
     taps_in1 = [
         TensorAccessPattern(
             (1, num_elements // 4),
-            chunk_in_1 * i,
+            [0, chunk_in_1 * i],
             [1, 1, 1, chunk_in_1],
             [0, 0, 0, 1],
         )
@@ -108,7 +108,7 @@ def my_dot_product(dev, kernel_size):
     taps_in2 = [
         TensorAccessPattern(
             (1, num_elements),
-            chunk_in_2 * i,
+            [0, chunk_in_2 * i],
             [1, 1, 1, chunk_in_2],
             [0, 0, 0, 1],
         )
@@ -119,7 +119,7 @@ def my_dot_product(dev, kernel_size):
     taps_out = [
         TensorAccessPattern(
             (1, num_columns),
-            1 * i,
+            [0, 1 * i],
             [1, 1, 1, 1],
             [0, 0, 0, 1],
         )
@@ -163,23 +163,18 @@ def my_dot_product(dev, kernel_size):
     return Program(dev, rt).resolve_program(SequentialPlacer())
 
 
-try:
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--device", help="Device name", default="npu")
-    parser.add_argument("-s", "--size", help="Kernel size (2560 or 6912)", type=int, default=2560)
-    args = parser.parse_args()
-    
-    if args.device == "npu":
-        dev = NPU1()
-    elif args.device == "npu2":
-        dev = NPU2()
-    else:
-        dev = NPU1() # Default
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("-d", "--device", help="Device name", default="npu")
+parser.add_argument("-s", "--size", help="Kernel size (2560 or 6912)", type=int, default=2560)
+args = parser.parse_args()
 
-    module = my_dot_product(dev, args.size)
-    print(module)
+if args.device == "npu":
+    dev = NPU1()
+elif args.device == "npu2":
+    dev = NPU2()
+else:
+    dev = NPU1() # Default
 
-except Exception as e:
-    print(f"Error: {e}", file=sys.stderr)
-    sys.exit(1)
+module = my_dot_product(dev, args.size)
+print(module)
