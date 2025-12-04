@@ -138,7 +138,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     for i in range(4):
         workers.append(Worker(
             core_body,
-            [of_in1_cons[i], of_in2_cons[i], of_out0_prod[i], dot_kernel],
+            [of_in1_cons[i].cons(), of_in2_cons[i].cons(), of_out0_prod[i].prod(), dot_kernel],
             placement=compute_tiles_col0[i]
         ))
         
@@ -146,7 +146,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     for i in range(4):
         workers.append(Worker(
             core_body,
-            [of_in1_cons[i+4], of_in2_cons[i+4], of_out1_prod[i], dot_kernel],
+            [of_in1_cons[i+4].cons(), of_in2_cons[i+4].cons(), of_out1_prod[i].prod(), dot_kernel],
             placement=compute_tiles_col1[i]
         ))
 
