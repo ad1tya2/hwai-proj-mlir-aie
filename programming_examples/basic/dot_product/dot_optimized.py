@@ -89,12 +89,6 @@ def my_dot_optimized(dev, num_elements, trace_size):
     # --- L2 ObjectFifos ---
     # We need L2 tiles to perform split/join (distribute/gather)
     
-    # in1 L2 on Tile(0, 1)
-    of_in1_L2 = ObjectFifo(tile_in_ty, name="in1_L2", placement=Tile(0, 1))
-    
-    # in2 L2 on Tile(1, 1)
-    of_in2_L2 = ObjectFifo(tile_in_ty, name="in2_L2", placement=Tile(1, 1))
-    
     # out0 L2 on Tile(0, 1)
     of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2", placement=Tile(0, 1))
     
@@ -103,21 +97,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
 
     # Connect L3 to L2
     # in1 -> in1_L2
-    # We need to link them. In IRON, we can just create a consumption chain.
-    # But wait, we need to explicitly move data?
-    # No, ObjectFifo connections define the graph.
-    # But we need to define the flow.
-    # of_in1 -> of_in1_L2
-    # We can do: of_in1_L2 = of_in1.cons().forward(tile_in_ty, "in1_L2", placement=Tile(0, 1))
-    # But we want to reuse the variable names if possible or just redefine.
-    
-    # Let's redefine the flow properly.
-    
-    # Link Shim to L2
-    # in1 (Shim) -> in1_L2 (Mem)
-    # We use .cons().forward() or just create L2 and link in runtime?
-    # IRON usually infers links if we use .cons() on one and pass to another?
-    # No, we must construct the chain.
+    # We use .cons().forward() to create L2 and link in runtime
     
     of_in1_L2 = of_in1.cons().forward(tile_in_ty, name="in1_L2", placement=Tile(0, 1))
     of_in2_L2 = of_in2.cons().forward(tile_in_ty, name="in2_L2", placement=Tile(1, 1))
