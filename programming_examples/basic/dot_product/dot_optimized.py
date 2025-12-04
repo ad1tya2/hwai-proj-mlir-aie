@@ -87,45 +87,113 @@ def my_dot_optimized(dev, num_elements, trace_size):
     # For a simple 1D split:
     
     # --- L2 ObjectFifos ---
-    # We define these as the main buffers. 
-    # rt.fill will write to them (Shim -> L2)
-    # rt.drain will read from them (L2 -> Shim)
-    # split/join will operate on them (L2 <-> L1)
+    # We use 4 MemTiles to distribute the load and avoid channel exhaustion.
+    # L2(0,1) and L2(2,1) handle in1.
+    # L2(1,1) and L2(3,1) handle in2.
     
-    # in1 L2
-    of_in1_L2 = ObjectFifo(tile_in_ty, name="in1_L2")
+    # in1 L2 primary (0,1)
+    of_in1_L2_0 = ObjectFifo(tile_in_ty, name="in1_L2_0")
+    # in1 L2 secondary (2,1)
+    of_in1_L2_2 = ObjectFifo(tile_in_ty, name="in1_L2_2")
     
-    # in2 L2
-    of_in2_L2 = ObjectFifo(tile_in_ty, name="in2_L2")
+    # in2 L2 primary (1,1)
+    of_in2_L2_1 = ObjectFifo(tile_in_ty, name="in2_L2_1")
+    # in2 L2 secondary (3,1)
+    of_in2_L2_3 = ObjectFifo(tile_in_ty, name="in2_L2_3")
     
-    # out0 L2
+    # out0 L2 (0,1)
     of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2")
-    
-    # out1 L2
+    # out1 L2 (1,1)
     of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
 
-    # --- Split/Join ---
+    # --- Routing ---
     
-    # in1 consumers (split from L2)
-    # We place the split operation on Tile(0, 1)
-    of_in1_cons = of_in1_L2.cons().split(
-        [tile_size * i for i in range(num_tiles)], 
-        obj_types=[tile_in_ty] * num_tiles,
-        names=[f"in1_cons_{i}" for i in range(num_tiles)],
+    # in1: Shim 0 -> L2(0,1) -> L2(2,1)
+    # We need to split in1 at L2(0,1) into "Col 0 part" and "Col 1 part".
+    # Col 0 part stays in L2(0,1) and is distributed.
+    # Col 1 part goes to L2(2,1) and is distributed.
+    
+    # We define the flow:
+    # of_in1_L2_0 is the entry point.
+    of_in1_L2_0 = of_in1.cons().forward(tile_in_ty, name="in1_L2_0", placement=Tile(0, 1))
+    
+    # Split at L2(0,1) into 2 branches: local distribution and forwarding
+    # But wait, split creates consumers.
+    # We want one consumer to be the distribution to Col 0, and another to be L2(2,1).
+    # But distribution to Col 0 is 4 consumers.
+    # So we split into 5 consumers? 4 for Col 0, 1 for L2(2,1).
+    # Yes.
+    
+    # in1 split at L2(0,1)
+    # Chunks 0..3 go to Col 0 tiles.
+    # Chunks 4..7 go to L2(2,1).
+    # We need to group chunks 4..7 into one stream for L2(2,1)? 
+    # Or just send 4 streams?
+    # If we send 4 streams, we use 4 channels.
+    # We want to send 1 stream (chunks 4..7) to L2(2,1).
+    # IRON `split` might not support hierarchical splitting easily (grouping chunks).
+    # But we can split into 5: [chunk0, chunk1, chunk2, chunk3, chunk4_7].
+    # But chunk4_7 must be contiguous?
+    # The input stream is [0, 1, 2, 3, 4, 5, 6, 7].
+    # We can split into [0, 1, 2, 3, 4..7].
+    # Yes, by specifying offsets/sizes.
+    
+    # in1 consumers at L2(0,1)
+    # 4 for Col 0 tiles, 1 for L2(2,1)
+    of_in1_L2_0_cons = of_in1_L2_0.cons().split(
+        [tile_size * 0, tile_size * 1, tile_size * 2, tile_size * 3, tile_size * 4],
+        obj_types=[tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty, np.ndarray[(4*tile_size,), np.dtype(dtype)]],
+        names=[f"in1_col0_{i}" for i in range(4)] + ["in1_to_L2_2"],
         placement=Tile(0, 1)
     )
     
-    # in2 consumers (split from L2)
-    # We place the split operation on Tile(1, 1)
-    of_in2_cons = of_in2_L2.cons().split(
-        [tile_size * i for i in range(num_tiles)],
-        obj_types=[tile_in_ty] * num_tiles,
-        names=[f"in2_cons_{i}" for i in range(num_tiles)],
+    in1_col0_cons = of_in1_L2_0_cons[0:4]
+    in1_to_L2_2 = of_in1_L2_0_cons[4]
+    
+    # Forward to L2(2,1)
+    of_in1_L2_2 = in1_to_L2_2.forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_2", placement=Tile(2, 1))
+    
+    # Split at L2(2,1) to Col 1 tiles
+    of_in1_L2_2_cons = of_in1_L2_2.cons().split(
+        [tile_size * i for i in range(4)],
+        obj_types=[tile_in_ty] * 4,
+        names=[f"in1_col1_{i}" for i in range(4)],
+        placement=Tile(2, 1)
+    )
+    in1_col1_cons = of_in1_L2_2_cons
+
+    # in2: Shim 1 -> L2(1,1) -> L2(3,1)
+    of_in2_L2_1 = of_in2.cons().forward(tile_in_ty, name="in2_L2_1", placement=Tile(1, 1))
+    
+    # Split at L2(1,1) into 5: 4 for Col 1, 1 for L2(3,1) (for Col 0)
+    # Input stream is [0..7].
+    # Chunks 0..3 are for Col 0 (via L2(3,1)).
+    # Chunks 4..7 are for Col 1 (local).
+    # So we split into [0..3, 4, 5, 6, 7].
+    
+    of_in2_L2_1_cons = of_in2_L2_1.cons().split(
+        [tile_size * 0, tile_size * 4, tile_size * 5, tile_size * 6, tile_size * 7],
+        obj_types=[np.ndarray[(4*tile_size,), np.dtype(dtype)], tile_in_ty, tile_in_ty, tile_in_ty, tile_in_ty],
+        names=["in2_to_L2_3"] + [f"in2_col1_{i}" for i in range(4)],
         placement=Tile(1, 1)
     )
     
-    # out0 producers (join to L2)
-    # We place the join operation on Tile(0, 1)
+    in2_to_L2_3 = of_in2_L2_1_cons[0]
+    in2_col1_cons = of_in2_L2_1_cons[1:5]
+    
+    # Forward to L2(3,1)
+    of_in2_L2_3 = in2_to_L2_3.forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_3", placement=Tile(3, 1))
+    
+    # Split at L2(3,1) to Col 0 tiles
+    of_in2_L2_3_cons = of_in2_L2_3.cons().split(
+        [tile_size * i for i in range(4)],
+        obj_types=[tile_in_ty] * 4,
+        names=[f"in2_col0_{i}" for i in range(4)],
+        placement=Tile(3, 1)
+    )
+    in2_col0_cons = of_in2_L2_3_cons
+
+    # out0 producers (join to L2(0,1))
     of_out0_L2_prod = of_out0_L2.prod().join(
         [1 * i for i in range(4)], 
         obj_types=[tile_out_ty] * 4,
@@ -133,14 +201,16 @@ def my_dot_optimized(dev, num_elements, trace_size):
         placement=Tile(0, 1)
     )
     
-    # out1 producers (join to L2)
-    # We place the join operation on Tile(1, 1)
+    # out1 producers (join to L2(1,1))
     of_out1_L2_prod = of_out1_L2.prod().join(
         [1 * i for i in range(4)],
         obj_types=[tile_out_ty] * 4,
         names=[f"out1_prod_{i}" for i in range(4)],
         placement=Tile(1, 1)
     )
+    
+    of_out0_shim = of_out0_L2.cons().forward(tile_out_ty, name="out0_shim", placement=Tile(0, 0))
+    of_out1_shim = of_out1_L2.cons().forward(tile_out_ty, name="out1_shim", placement=Tile(1, 0))
 
     def core_body(in1, in2, out, kernel_func):
         # Process 1 chunk
@@ -157,7 +227,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     for i in range(4):
         workers.append(Worker(
             core_body,
-            [of_in1_cons[i].cons(), of_in2_cons[i].cons(), of_out0_L2_prod[i].prod(), dot_kernel],
+            [in1_col0_cons[i].cons(), in2_col0_cons[i].cons(), of_out0_L2_prod[i].prod(), dot_kernel],
             placement=compute_tiles_col0[i]
         ))
         
@@ -165,7 +235,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     for i in range(4):
         workers.append(Worker(
             core_body,
-            [of_in1_cons[i+4].cons(), of_in2_cons[i+4].cons(), of_out1_L2_prod[i].prod(), dot_kernel],
+            [in1_col1_cons[i].cons(), in2_col1_cons[i].cons(), of_out1_L2_prod[i].prod(), dot_kernel],
             placement=compute_tiles_col1[i]
         ))
 
@@ -186,17 +256,17 @@ def my_dot_optimized(dev, num_elements, trace_size):
         rt.start(*workers)
         tg = rt.task_group()
         
-        # Fill in1 (A) -> L2
-        rt.fill(of_in1_L2.prod(), A, tap_in1, task_group=tg, placement=Tile(0, 0))
+        # Fill in1 (A) -> L2(0,1)
+        rt.fill(of_in1_L2_0.prod(), A, tap_in1, task_group=tg, placement=Tile(0, 0))
         
-        # Fill in2 (B) -> L2
-        rt.fill(of_in2_L2.prod(), B, tap_in2, task_group=tg, placement=Tile(1, 0))
+        # Fill in2 (B) -> L2(1,1)
+        rt.fill(of_in2_L2_1.prod(), B, tap_in2, task_group=tg, placement=Tile(1, 0))
         
-        # Drain out0 (C0) <- L2
-        rt.drain(of_out0_L2.cons(), C0, tap_out0, wait=True, task_group=tg, placement=Tile(0, 0))
+        # Drain out0 (C0) <- L2(0,1)
+        rt.drain(of_out0_shim.cons(), C0, tap_out0, wait=True, task_group=tg, placement=Tile(0, 0))
         
-        # Drain out1 (C1) <- L2
-        rt.drain(of_out1_L2.cons(), C1, tap_out1, wait=True, task_group=tg, placement=Tile(1, 0))
+        # Drain out1 (C1) <- L2(1,1)
+        rt.drain(of_out1_shim.cons(), C1, tap_out1, wait=True, task_group=tg, placement=Tile(1, 0))
         
         rt.finish_task_group(tg)
 
