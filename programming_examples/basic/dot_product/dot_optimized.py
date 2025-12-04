@@ -88,14 +88,10 @@ def my_dot_optimized(dev, num_elements, trace_size):
     
     # in1 consumers
     of_in1_cons = of_in1.cons().split(
-        [tile_size * i for i in range(num_tiles)], # Offsets in the stream? No, this is usually for multidimensional.
-        # If we just want to distribute chunks round-robin or sequentially:
-        # The IRON API `split` or `distribute` might be what we need.
-        # `split` takes `of_offsets`.
-        # Let's assume sequential distribution of chunks.
+        [tile_size * i for i in range(num_tiles)], 
         obj_types=[tile_in_ty] * num_tiles,
         names=[f"in1_cons_{i}" for i in range(num_tiles)],
-        placement=all_compute_tiles # This might imply the mapping
+        placement=Tile(0, 0)
     )
     
     # in2 consumers
@@ -103,16 +99,16 @@ def my_dot_optimized(dev, num_elements, trace_size):
         [tile_size * i for i in range(num_tiles)],
         obj_types=[tile_in_ty] * num_tiles,
         names=[f"in2_cons_{i}" for i in range(num_tiles)],
-        placement=all_compute_tiles
+        placement=Tile(1, 0)
     )
     
     # out0 producers (from Col 0 tiles)
     # We join 4 producers into one consumer (Shim 0)
     of_out0_prod = of_out0.prod().join(
-        [1 * i for i in range(4)], # Offsets in output buffer? 1 element each.
+        [1 * i for i in range(4)], 
         obj_types=[tile_out_ty] * 4,
         names=[f"out0_prod_{i}" for i in range(4)],
-        placement=compute_tiles_col0
+        placement=Tile(0, 0)
     )
     
     # out1 producers (from Col 1 tiles)
@@ -120,7 +116,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
         [1 * i for i in range(4)],
         obj_types=[tile_out_ty] * 4,
         names=[f"out1_prod_{i}" for i in range(4)],
-        placement=compute_tiles_col1
+        placement=Tile(1, 0)
     )
 
     def core_body(in1, in2, out, kernel_func):
