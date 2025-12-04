@@ -187,7 +187,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     # `of_in1_L2_1 = in1_fwd.forward(...)`?
     # Yes, forward() is a method on ObjectFifoHandle.
     
-    of_in1_L2_1 = in1_fwd.forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
+    of_in1_L2_1 = in1_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
     
     # in1_L2_1 splits to 4 workers (4-7)
     in1_w4_7 = of_in1_L2_1.cons().split(
@@ -205,7 +205,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     in2_w0_3 = of_in2_L2_0_cons[0:4]
     in2_fwd = of_in2_L2_0_cons[4]
     
-    of_in2_L2_1 = in2_fwd.forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
+    of_in2_L2_1 = in2_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
     
     in2_w4_7 = of_in2_L2_1.cons().split(
         [tile_size * i for i in range(4)],
