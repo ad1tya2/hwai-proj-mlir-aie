@@ -175,7 +175,7 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
   // 128 elements = 32 bytes of packed weights
   // 128 elements = 128 bytes of activations
   int blocks = n / 128;
-  AIE_LOOP_UNROLL(2);
+  AIE_LOOP_UNROLL(2)
   for (int i = 0; i < blocks; i++) chess_prepare_for_pipelining {
     // Load 32 bytes of packed weights
     aie::vector<uint8_t, 32> v_packed = aie::load_v<32>(px);
