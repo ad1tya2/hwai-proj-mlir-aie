@@ -97,9 +97,9 @@ def my_dot_product(dev, kernel_size):
     taps_in1 = [
         TensorAccessPattern(
             (1, num_elements // 4),
-            [0, chunk_in_1 * i],
-            [1, 1, 1, chunk_in_1],
-            [0, 0, 0, 1],
+            chunk_in_1 * i,
+            [1, chunk_in_1],
+            [0, 1],
         )
         for i in range(num_columns)
     ]
@@ -108,9 +108,9 @@ def my_dot_product(dev, kernel_size):
     taps_in2 = [
         TensorAccessPattern(
             (1, num_elements),
-            [0, chunk_in_2 * i],
-            [1, 1, 1, chunk_in_2],
-            [0, 0, 0, 1],
+            chunk_in_2 * i,
+            [1, chunk_in_2],
+            [0, 1],
         )
         for i in range(num_columns)
     ]
@@ -119,9 +119,9 @@ def my_dot_product(dev, kernel_size):
     taps_out = [
         TensorAccessPattern(
             (1, num_columns),
-            [0, 1 * i],
-            [1, 1, 1, 1],
-            [0, 0, 0, 1],
+            1 * i,
+            [1, 1],
+            [0, 1],
         )
         for i in range(num_columns)
     ]
