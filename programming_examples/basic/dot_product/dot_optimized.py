@@ -90,10 +90,10 @@ def my_dot_optimized(dev, num_elements, trace_size):
     # We need L2 tiles to perform split/join (distribute/gather)
     
     # out0 L2 on Tile(0, 1)
-    of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2", placement=Tile(0, 1))
+    of_out0_L2 = ObjectFifo(tile_out_ty, name="out0_L2")
     
     # out1 L2 on Tile(1, 1)
-    of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2", placement=Tile(1, 1))
+    of_out1_L2 = ObjectFifo(tile_out_ty, name="out1_L2")
 
     # Connect L3 to L2
     # in1 -> in1_L2
