@@ -230,6 +230,11 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     aie::vector<uint8_t, 32> w2_u;
     aie::vector<uint8_t, 32> w3_u;
 
+    w3_u = bit_and(v_packed, mask);
+    w2_u = bit_and(logical_downshift(v_packed, 2), mask);
+    w1_u = bit_and(logical_downshift(v_packed, 4), mask);
+    w0_u = bit_and(logical_downshift(v_packed, 6), mask);
+/*
     for(int k=0; k<32; k++) {
         uint8_t val = v_packed[k];
         w0_u[k] = (val >> 6) & 0x3;
@@ -237,6 +242,7 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
         w2_u[k] = (val >> 2) & 0x3;
         w3_u[k] = (val >> 0) & 0x3;
     }
+        */
 
     // Cast to int8
     aie::vector<int8_t, 32> w0 = aie::vector_cast<int8_t>(w0_u);
