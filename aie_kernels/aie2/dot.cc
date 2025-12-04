@@ -175,7 +175,6 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
   // 128 elements = 32 bytes of packed weights
   // 128 elements = 128 bytes of activations
   int blocks = n / 128;
-
   for (int i = 0; i < blocks; i++) chess_prepare_for_pipelining {
     // Load 32 bytes of packed weights
     aie::vector<uint8_t, 32> v_packed = aie::load_v<32>(px);
@@ -230,11 +229,11 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     aie::vector<uint8_t, 32> w2_u;
     aie::vector<uint8_t, 32> w3_u;
 
-    w3_u = bit_and(v_packed, mask);
-    w2_u = bit_and(logical_downshift(v_packed, 2), mask);
-    w1_u = bit_and(logical_downshift(v_packed, 4), mask);
-    w0_u = bit_and(logical_downshift(v_packed, 6), mask);
-/*
+    // w3_u = bit_and(v_packed, mask);
+    // w2_u = bit_and(logical_downshift(v_packed, 2), mask);
+    // w1_u = bit_and(logical_downshift(v_packed, 4), mask);
+    // w0_u = bit_and(logical_downshift(v_packed, 6), mask);
+
     for(int k=0; k<32; k++) {
         uint8_t val = v_packed[k];
         w0_u[k] = (val >> 6) & 0x3;
@@ -242,7 +241,7 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
         w2_u[k] = (val >> 2) & 0x3;
         w3_u[k] = (val >> 0) & 0x3;
     }
-        */
+        
 
     // Cast to int8
     aie::vector<int8_t, 32> w0 = aie::vector_cast<int8_t>(w0_u);
@@ -253,12 +252,13 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     // Load activations
     aie::vector<int8_t, 32> y0 = aie::load_v<32>(py); py += 32;
     aie::vector<int8_t, 32> y1 = aie::load_v<32>(py); py += 32;
-    aie::vector<int8_t, 32> y2 = aie::load_v<32>(py); py += 32;
-    aie::vector<int8_t, 32> y3 = aie::load_v<32>(py); py += 32;
+
 
     // Multiply and accumulate
     acc = aie::mac(acc, w0, y0);
     acc = aie::mac(acc, w1, y1);
+    aie::vector<int8_t, 32> y2 = aie::load_v<32>(py); py += 32;
+    aie::vector<int8_t, 32> y3 = aie::load_v<32>(py); py += 32;
     acc = aie::mac(acc, w2, y2);
     acc = aie::mac(acc, w3, y3);
   }
