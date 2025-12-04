@@ -91,4 +91,64 @@ void dot_product_bf16_scalar(bfloat16 *a_in, bfloat16 *b_in, bfloat16 *c_out) {
   dot_product_scalar<bfloat16, bfloat16, 1024>(a_in, b_in, c_out);
 }
 
+// Optimized kernel for size 2560
+// 2560 elements. Vector size for int32 is 16 (512/32).
+// 2560 / 16 = 160 iterations.
+// Unroll by 4 -> 40 iterations.
+void dot_product_2560(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
+  aie::vector<int32_t, 16> acc = aie::zeros<int32_t, 16>();
+  int32_t *__restrict pA = a_in;
+  int32_t *__restrict pB = b_in;
+
+  for (int i = 0; i < 40; i++) chess_prepare_for_pipelining {
+    aie::vector<int32_t, 16> A0 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B0 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A0, B0);
+
+    aie::vector<int32_t, 16> A1 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B1 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A1, B1);
+
+    aie::vector<int32_t, 16> A2 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B2 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A2, B2);
+
+    aie::vector<int32_t, 16> A3 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B3 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A3, B3);
+  }
+
+  *c_out = aie::reduce_add(acc);
+}
+
+// Optimized kernel for size 6912
+// 6912 elements. Vector size for int32 is 16.
+// 6912 / 16 = 432 iterations.
+// Unroll by 4 -> 108 iterations.
+void dot_product_6912(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
+  aie::vector<int32_t, 16> acc = aie::zeros<int32_t, 16>();
+  int32_t *__restrict pA = a_in;
+  int32_t *__restrict pB = b_in;
+
+  for (int i = 0; i < 108; i++) chess_prepare_for_pipelining {
+    aie::vector<int32_t, 16> A0 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B0 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A0, B0);
+
+    aie::vector<int32_t, 16> A1 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B1 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A1, B1);
+
+    aie::vector<int32_t, 16> A2 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B2 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A2, B2);
+
+    aie::vector<int32_t, 16> A3 = aie::load_v<16>(pA); pA += 16;
+    aie::vector<int32_t, 16> B3 = aie::load_v<16>(pB); pB += 16;
+    acc = aie::mac(acc, A3, B3);
+  }
+
+  *c_out = aie::reduce_add(acc);
+}
+
 } // extern "C"
