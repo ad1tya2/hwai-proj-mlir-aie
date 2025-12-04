@@ -37,6 +37,12 @@ dot_py=dot.py
 .PHONY: all
 all: ${dot_xclbin_target} ${host_target}
 
+.PHONY: test
+test: ${host_target}
+
+.PHONY: test_optimized
+test_optimized: ${host_opt_target}
+
 build/dot.o: ${srcdir}/../../../aie_kernels/aie2/dot.cc
 	mkdir -p ${@D}
 ifeq (${DEVICE}, npu2)
