@@ -193,38 +193,7 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     // Mask 0x3 = 00000011
     aie::vector<uint8_t, 32> mask = aie::broadcast<uint8_t, 32>(0x3);
     
-    // Right shift by multiplication is tricky for integers in AIE without specific intrinsics.
-    // However, AIE2 has vshift instructions.
-    // Let's try to use standard C++ operators on the vector if possible, but the error said no.
-    // The error said "invalid operands to binary expression ('aie::vector<uint8_t, 32>' ... and 'int')".
-    // This means operator>> is not overloaded for vector and int.
-    
-    // We can use aie::utils::bit_slice if available, or just manual masking and shifting if we can cast to something that supports it.
-    // Or we can use `aie::srl` (Shift Right Logical) if it exists.
-    // Let's try `aie::srl`.
-    // If `aie::srl` is not found, we might need to look deeper.
-    // But wait, `upshift` was lane shift.
-    
-    // Let's try to use `aie::shuffle_down`? No.
-    
-    // Actually, for 2-bit unpacking, we can use a look-up table (LUT) approach or just simple masking if we can shift.
-    // Since we can't shift easily, maybe we can use `aie::mul` with a fractional type? No, these are uint8.
-    
-    // Let's try to cast to `aie::accum` which might support shifting?
-    // Or use `aie::vector_cast`.
-    
-    // Wait, I can use `aie::sbs` (Select Bits) or similar?
-    
-    // Let's try `aie::srl` which is standard in some AIE APIs.
-    // aie::vector<uint8_t, 32> w0_u = aie::bit_and(aie::srl(v_packed, 6), mask);
-    
-    // If aie::srl doesn't exist, I will try to implement it via multiplication if possible, but uint8 multiplication is limited.
-    
-    // Another option: The user mentioned "make it simpler and avoid the thousands of errors you can handle dimensions in main kernel if required".
-    // Maybe I can just use a loop?
-    // "for (int k=0; k<32; k++) ..."
-    // The compiler might vectorize it.
-    
+    // Unpack 2-bit values using a scalar loop to avoid vector shift compilation issues
     aie::vector<uint8_t, 32> w0_u;
     aie::vector<uint8_t, 32> w1_u;
     aie::vector<uint8_t, 32> w2_u;
@@ -262,11 +231,13 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
 }
 
 void dot_product_i2_i8_2560(uint8_t *vx, int8_t *vy, float *s) {
-    dot_product_i2_i8(2560, vx, vy, s);
+    // 2560 elements / 4 tiles = 640 elements per tile
+    dot_product_i2_i8(640, vx, vy, s);
 }
 
 void dot_product_i2_i8_6912(uint8_t *vx, int8_t *vy, float *s) {
-    dot_product_i2_i8(6912, vx, vy, s);
+    // 6912 elements / 8 tiles = 864 elements per tile
+    dot_product_i2_i8(864, vx, vy, s);
 }
 
 } // extern "C"

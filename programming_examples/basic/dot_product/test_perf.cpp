@@ -121,14 +121,18 @@ int main(int argc, const char *argv[]) {
   int trace_size = vm["trace_sz"].as<int>();
   int vector_size = vm["size"].as<int>();
 
-  // 4 columns per kernel
+  // Determine columns based on size
   int num_columns = 4;
+  if (vector_size == 6912) {
+      num_columns = 8;
+  }
+  
   // 5 concurrent kernels
   int num_jobs = 5;
   
   std::cout << "Running test_perf with " << num_jobs << " concurrent jobs, " << num_columns << " columns each." << std::endl;
 
-  int INPUT_VOLUME = vector_size; 
+  int INPUT_VOLUME = vector_size / num_columns; 
   // Output: 1 element per column
   int OUTPUT_VOLUME_PER_COL = 1;
 
