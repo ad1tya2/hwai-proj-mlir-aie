@@ -129,6 +129,25 @@ perf_4col: ${host_perf_target}
 				--aie-generate-npu-insts --npu-insts-name=dot_insts_6912.bin ../build/aie_dot_6912.mlir
 	./$(host_perf_target) -i build/dot_insts_6912.bin -x build/dot_6912.xclbin -k MLIR_AIE --size 6912 --iters 100 --verify true --warmup 10
 
+# Shared Library Target
+lib_target?=libdot.so
+dot_lib_xclbin_target?=build/dot_lib.xclbin
+dot_lib_insts_target?=build/dot_lib_insts.bin
+
+.PHONY: lib
+lib: ${lib_target}
+
+${lib_target}: ${srcdir}/dot_lib.cpp ${dot_lib_xclbin_target}
+	${CXX} -fPIC -shared ${XRT_FLAGS} ${UTILS_INCLUDE} -o $@ $< ${XRT_LIBS}
+
+# Build XCLBIN for Library (Max Size 6912)
+${dot_lib_xclbin_target}: ${srcdir}/${dot_py} build/dot.o
+	mkdir -p ${@D}
+	python3 ${srcdir}/${dot_py} -d ${DEVICE} --size 6912 > build/aie_dot_lib.mlir
+	cd build && aiecc.py -v --aie-generate-xclbin --no-compile-host --xclbin-name=${@F} \
+				--no-xchesscc --no-xbridge \
+				--aie-generate-npu-insts --npu-insts-name=${dot_lib_insts_target:build/%=%} ../build/aie_dot_lib.mlir
+
 .PHONY: clean
 clean:
-	-rm -rf build
+	-rm -rf build libdot.so
