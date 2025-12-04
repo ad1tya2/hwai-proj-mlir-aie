@@ -60,7 +60,7 @@ int init_kernels(const char* xclbin_path, const char* instr_path) {
 
         // Open Device
         ctx.device = xrt::device(0); // Index 0
-        auto xclbin = xrt::xclbin(xclbin_path);
+        auto xclbin = xrt::xclbin(std::string(xclbin_path));
         
         // Register XCLBIN
         ctx.device.register_xclbin(xclbin);
