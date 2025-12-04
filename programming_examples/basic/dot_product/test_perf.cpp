@@ -37,8 +37,8 @@ int main(int argc, const char *argv[]) {
   int trace_size = vm["trace_sz"].as<int>();
   int vector_size = vm["size"].as<int>();
 
-  // 5 columns
-  int num_columns = 5;
+  // 4 columns
+  int num_columns = 4;
   int INPUT_VOLUME = vector_size; 
   // Output: 1 element per column
   int OUTPUT_VOLUME_PER_COL = 1;

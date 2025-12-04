@@ -15,7 +15,7 @@ from aie.helpers.taplib.tap import TensorAccessPattern
 from aie.iron.controlflow import range_
 
 def my_dot_product(dev, kernel_size):
-    num_columns = 5
+    num_columns = 4
     per_tile_elements = kernel_size
     
     # Total elements processed per round (across all columns)

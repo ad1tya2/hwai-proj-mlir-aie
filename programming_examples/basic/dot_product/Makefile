@@ -114,16 +114,16 @@ ${host_perf_target}: ${srcdir}/test_perf.cpp ${dot_xclbin_target}
 	mkdir -p ${@D}
 	${CXX} ${XRT_FLAGS} ${UTILS_INCLUDE} ${UTILS_LIB}  -o $@ $< ${XRT_LIBS}
 
-.PHONY: perf_5col
-perf_5col: ${host_perf_target}
-	@echo "Running perf for size 2560 (5 columns)"
+.PHONY: perf_4col
+perf_4col: ${host_perf_target}
+	@echo "Running perf for size 2560 (4 columns)"
 	python3 ${srcdir}/${dot_py} -d ${DEVICE} --size 2560 > build/aie_dot_2560.mlir
 	cd build && aiecc.py -v --aie-generate-xclbin --no-compile-host --xclbin-name=dot_2560.xclbin \
 				--no-xchesscc --no-xbridge \
 				--aie-generate-npu-insts --npu-insts-name=dot_insts_2560.bin ../build/aie_dot_2560.mlir
 	./$(host_perf_target) -i build/dot_insts_2560.bin -x build/dot_2560.xclbin -k MLIR_AIE --size 2560 --iters 100 --verify true --warmup 10
 
-	@echo "Running perf for size 6912 (5 columns)"
+	@echo "Running perf for size 6912 (4 columns)"
 	python3 ${srcdir}/${dot_py} -d ${DEVICE} --size 6912 > build/aie_dot_6912.mlir
 	cd build && aiecc.py -v --aie-generate-xclbin --no-compile-host --xclbin-name=dot_6912.xclbin \
 				--no-xchesscc --no-xbridge \
