@@ -58,7 +58,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     in1_fwd = of_in1_L2_0_cons[4]
     
     # Forward to secondary L2
-    of_in1_L2_1 = in1_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
+    of_in1_L2_1 = in1_fwd.cons().forward(obj_type=np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in1_L2_1")
     
     # Split L2_1: 4 chunks for workers 4-7
     in1_w4_7 = of_in1_L2_1.cons().split(
@@ -81,7 +81,7 @@ def my_dot_optimized(dev, num_elements, trace_size):
     in2_fwd = of_in2_L2_0_cons[4]
     
     # Forward to secondary L2
-    of_in2_L2_1 = in2_fwd.cons().forward(np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
+    of_in2_L2_1 = in2_fwd.cons().forward(obj_type=np.ndarray[(4*tile_size,), np.dtype(dtype)], name="in2_L2_1")
     
     # Split L2_1: 4 chunks for workers 4-7
     in2_w4_7 = of_in2_L2_1.cons().split(
