@@ -21,75 +21,7 @@
 #include "cxxopts.hpp"
 #include "test_utils.h"
 
-using INOUT_DATATYPE_A = uint8_t;
-using INOUT_DATATYPE_B = int8_t;
-using INOUT_DATATYPE_C = float;
-
-#define QK_I2 128
-
-// --- Reference Code ---
-
-size_t quantize_i2_s_ref(const float * src, void * dst,
-                         int64_t n) {
-    double max = 0;
-    for (int i = 0; i < n; ++i) {
-        max = fmax(max, (double) std::fabs((double) src[i]));
-    }
-    double i2_scale = max;
-
-    uint8_t * q8 = (uint8_t *) std::malloc(n * sizeof(uint8_t));
-    if (!q8) return 0;
-    for (int i = 0; i < n; ++i) {
-        if (std::fabs((double) src[i]) < 1e-6) {
-            q8[i] = 1;
-            continue;
-        }
-        q8[i] = (double) src[i] * i2_scale > 0 ? 2 : 0;
-    }
-
-    std::memset(dst, 0, n * sizeof(uint8_t) / 4);
-
-    uint8_t * i2_weight = (uint8_t *) dst;
-    for (int i = 0; i < n / QK_I2; i++) {
-        for (int j = 0; j < QK_I2; j++) {
-            int group_idx = j / 32;
-            int group_pos = j % 32;
-            uint8_t temp = (uint8_t) (q8[i * QK_I2 + j] << (6 - 2 * group_idx));
-            i2_weight[i * 32 + group_pos] |= temp;
-        }
-    }
-
-    // float * scale_ptr = (float *) ((char *) i2_weight + n / 4);
-    // scale_ptr[0] = (float) i2_scale;
-    // Note: We are not passing scale to AIE in this kernel, just the weights.
-    // The AIE kernel just does dot product on the quantized values (0, 1, 2).
-
-    std::free(q8);
-
-    return (size_t) (n / 4);
-}
-
-void ggml_vec_dot_i2_i8_s(int n, float * s, const void * vx,  const void * vy) {
-    const uint8_t * x = (const uint8_t *) vx;
-    const int8_t  * y = (const int8_t  *) vy;
-
-    long long acc = 0;
-
-    for (int idx = 0; idx < n; ++idx) {
-        // decode the 2-bit q8 for element idx using the same layout as quantize
-        const int block = idx / QK_I2;         // which 128-element block
-        const int j = idx % QK_I2;             // position inside 128 block (0..127)
-        const int group_idx = j / 32;          // 0..3
-        const int group_pos = j % 32;          // 0..31
-        const size_t byte_index = (size_t) block * 32 + (size_t) group_pos;
-        const uint8_t packed = x[byte_index];
-        const uint8_t q8 = (packed >> (6 - 2 * group_idx)) & 0x3u; // 2-bit value 0,1,2
-
-        acc += (long long) q8 * (long long) y[idx];
-    }
-
-    if (s) *s = (float) acc;
-}
+using INOUT_DATATYPE = int32_t;
 
 int main(int argc, const char *argv[]) {
   cxxopts::Options options("Dot Product Perf Test");
@@ -111,12 +43,8 @@ int main(int argc, const char *argv[]) {
   // Output: 1 element per column
   int OUTPUT_VOLUME_PER_COL = 1;
 
-  // Input A: Packed 2-bit weights (uint8)
-  size_t INPUT_SIZE_A = (INPUT_VOLUME / 4) * sizeof(INOUT_DATATYPE_A);
-  // Input B: Activations (int8)
-  size_t INPUT_SIZE_B = INPUT_VOLUME * sizeof(INOUT_DATATYPE_B);
-  // Output C: Float
-  size_t OUTPUT_SIZE_PER_COL = OUTPUT_VOLUME_PER_COL * sizeof(INOUT_DATATYPE_C);
+  size_t INPUT_SIZE = INPUT_VOLUME * sizeof(INOUT_DATATYPE);
+  size_t OUTPUT_SIZE_PER_COL = OUTPUT_VOLUME_PER_COL * sizeof(INOUT_DATATYPE);
   
   srand(time(NULL));
 
@@ -146,33 +74,48 @@ int main(int argc, const char *argv[]) {
   void *bufInstr = bo_instr.map<void *>();
   memcpy(bufInstr, instr_v.data(), instr_v.size() * sizeof(int));
 
+  // Buffers: 5 input pairs (A, B) and 5 outputs (C)
+  // Arguments start from index 3.
+  // in1_0, in2_0, out_0, in1_1, in2_1, out_1, ...
+  // Wait, let's check dot.py argument order.
+  // my_workers = [Worker(..., [of_in1s[i], of_in2s[i], of_outs[i], ...])]
+  // rt.sequence(tensor_in_ty, tensor_in_ty, tensor_out_ty)
+  // The runtime sequence defines the external buffers.
+  // rt.sequence(A, B, C)
+  // A is input 1 (all columns share A? No, A is one large tensor).
+  // In dot.py:
+  // tensor_in_ty = np.ndarray[(num_elements,), ...]
+  // taps_in = [TensorAccessPattern(..., chunk_in * i, ...)]
+  // So there are only 3 external buffers: A, B, C.
+  // A and B are split by the shim DMA.
+  // C is gathered by the shim DMA.
+  
+  // So we only need 3 BOs.
+  // Wait, let's verify dot.py again.
+  // with rt.sequence(tensor_in_ty, tensor_in_ty, tensor_out_ty) as (A, B, C):
+  // Yes, 3 buffers.
+  
   int TOTAL_INPUT_VOLUME = INPUT_VOLUME * num_columns;
   int TOTAL_OUTPUT_VOLUME = num_columns; // 1 per column
   
-  size_t TOTAL_INPUT_SIZE_A = (TOTAL_INPUT_VOLUME / 4) * sizeof(INOUT_DATATYPE_A);
-  size_t TOTAL_INPUT_SIZE_B = TOTAL_INPUT_VOLUME * sizeof(INOUT_DATATYPE_B);
-  size_t TOTAL_OUTPUT_SIZE = TOTAL_OUTPUT_VOLUME * sizeof(INOUT_DATATYPE_C);
+  size_t TOTAL_INPUT_SIZE = TOTAL_INPUT_VOLUME * sizeof(INOUT_DATATYPE);
+  size_t TOTAL_OUTPUT_SIZE = TOTAL_OUTPUT_VOLUME * sizeof(INOUT_DATATYPE);
 
-  auto bo_inA = xrt::bo(device, TOTAL_INPUT_SIZE_A, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
-  auto bo_inB = xrt::bo(device, TOTAL_INPUT_SIZE_B, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
+  auto bo_inA = xrt::bo(device, TOTAL_INPUT_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(3));
+  auto bo_inB = xrt::bo(device, TOTAL_INPUT_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(4));
   auto bo_outC = xrt::bo(device, TOTAL_OUTPUT_SIZE, XRT_BO_FLAGS_HOST_ONLY, kernel.group_id(5));
 
-  INOUT_DATATYPE_A *bufInA = bo_inA.map<INOUT_DATATYPE_A *>();
-  INOUT_DATATYPE_B *bufInB = bo_inB.map<INOUT_DATATYPE_B *>();
-  INOUT_DATATYPE_C *bufOutC = bo_outC.map<INOUT_DATATYPE_C *>();
+  INOUT_DATATYPE *bufInA = bo_inA.map<INOUT_DATATYPE *>();
+  std::vector<INOUT_DATATYPE> AVec(TOTAL_INPUT_VOLUME);
+  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) AVec[i] = rand() % 10;
+  memcpy(bufInA, AVec.data(), TOTAL_INPUT_SIZE);
 
-  // Prepare data
-  // Generate random float weights and quantize them
-  std::vector<float> weights_float(TOTAL_INPUT_VOLUME);
-  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) weights_float[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
-  
-  quantize_i2_s_ref(weights_float.data(), bufInA, TOTAL_INPUT_VOLUME);
+  INOUT_DATATYPE *bufInB = bo_inB.map<INOUT_DATATYPE *>();
+  std::vector<INOUT_DATATYPE> BVec(TOTAL_INPUT_VOLUME);
+  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) BVec[i] = rand() % 10;
+  memcpy(bufInB, BVec.data(), TOTAL_INPUT_SIZE);
 
-  // Generate random int8 activations
-  std::vector<int8_t> activations(TOTAL_INPUT_VOLUME);
-  for (int i = 0; i < TOTAL_INPUT_VOLUME; i++) activations[i] = (int8_t)(rand() % 20 - 10);
-  memcpy(bufInB, activations.data(), TOTAL_INPUT_SIZE_B);
-
+  INOUT_DATATYPE *bufOutC = bo_outC.map<INOUT_DATATYPE *>();
   memset(bufOutC, 0, TOTAL_OUTPUT_SIZE);
 
   bo_instr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
@@ -206,16 +149,17 @@ int main(int argc, const char *argv[]) {
       if (do_verify) {
           int errors = 0;
           for(int col=0; col<num_columns; col++) {
-              float total_sum = bufOutC[col];
-              float ref_sum = 0;
-              
+              INOUT_DATATYPE total_sum = bufOutC[col];
+              INOUT_DATATYPE ref_sum = 0;
               // Calculate ref sum for this column
+              // Data is interleaved or blocked?
+              // taps_in: chunk_in * i. Blocked.
               int offset = col * INPUT_VOLUME;
-              int offset_packed = col * (INPUT_VOLUME / 4);
+              for(int i=0; i<INPUT_VOLUME; i++) {
+                  ref_sum += AVec[offset + i] * BVec[offset + i];
+              }
               
-              ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, bufInA + offset_packed, activations.data() + offset);
-              
-              if (std::abs(total_sum - ref_sum) > 1e-3) {
+              if (total_sum != ref_sum) {
                   std::cout << "Verification failed for column " << col << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
                   errors++;
               }
@@ -226,7 +170,7 @@ int main(int argc, const char *argv[]) {
   }
 
   double avg_exec_time = total_exec_time / n_iterations;
-  std::cout << "Performance Results (Size " << vector_size << ", 4 Columns):" << std::endl;
+  std::cout << "Performance Results (Size " << vector_size << ", 5 Columns):" << std::endl;
   std::cout << "  Average Time: " << avg_exec_time << " us" << std::endl;
   std::cout << "  Min Time:     " << min_exec_time << " us" << std::endl;
   std::cout << "  Max Time:     " << max_exec_time << " us" << std::endl;

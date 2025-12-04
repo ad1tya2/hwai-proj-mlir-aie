@@ -151,4 +151,85 @@ void dot_product_6912(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
   *c_out = aie::reduce_add(acc.to_vector<int32_t>(0));
 }
 
+// BitNet 2-bit quantized dot product
+// n: number of elements (must be multiple of 128)
+// vx: packed 2-bit weights (uint8_t*)
+// vy: int8_t activations (int8_t*)
+// s: output float scalar
+// Note: In this kernel signature we use standard pointers.
+// The caller passes pointers to buffers.
+// We accumulate to float at the end.
+void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
+  // Accumulator for the result
+  // We use acc32 for int8*int8 accumulation.
+  // Max value of int8 is 127. Max value of weight is 2.
+  // 127 * 2 = 254.
+  // 2560 elements * 254 = 650240. Fits in int32.
+  // Even for 6912, it fits.
+  aie::accum<acc32, 32> acc = aie::zeros<acc32, 32>();
+  
+  uint8_t *__restrict px = vx;
+  int8_t *__restrict py = vy;
+
+  // Process 128 elements per iteration
+  // 128 elements = 32 bytes of packed weights
+  // 128 elements = 128 bytes of activations
+  int blocks = n / 128;
+
+  for (int i = 0; i < blocks; i++) chess_prepare_for_pipelining {
+    // Load 32 bytes of packed weights
+    aie::vector<uint8_t, 32> v_packed = aie::load_v<32>(px);
+    px += 32;
+
+    // Unpack weights
+    // v0: indices 0..31 (bits 6-7)
+    // v1: indices 32..63 (bits 4-5)
+    // v2: indices 64..95 (bits 2-3)
+    // v3: indices 96..127 (bits 0-1)
+    
+    // We need to cast to int8 for multiplication with int8 activations
+    // But first unpack as uint8 to handle shifts correctly
+    
+    // Mask 0x3 = 00000011
+    
+    // Bits 6-7: >> 6
+    aie::vector<uint8_t, 32> w0_u = aie::bit_and(aie::upshift(v_packed, 6), (uint8_t)0x3);
+    // Bits 4-5: >> 4
+    aie::vector<uint8_t, 32> w1_u = aie::bit_and(aie::upshift(v_packed, 4), (uint8_t)0x3);
+    // Bits 2-3: >> 2
+    aie::vector<uint8_t, 32> w2_u = aie::bit_and(aie::upshift(v_packed, 2), (uint8_t)0x3);
+    // Bits 0-1: >> 0
+    aie::vector<uint8_t, 32> w3_u = aie::bit_and(v_packed, (uint8_t)0x3);
+
+    // Cast to int8
+    aie::vector<int8_t, 32> w0 = aie::vector_cast<int8_t>(w0_u);
+    aie::vector<int8_t, 32> w1 = aie::vector_cast<int8_t>(w1_u);
+    aie::vector<int8_t, 32> w2 = aie::vector_cast<int8_t>(w2_u);
+    aie::vector<int8_t, 32> w3 = aie::vector_cast<int8_t>(w3_u);
+
+    // Load activations
+    aie::vector<int8_t, 32> y0 = aie::load_v<32>(py); py += 32;
+    aie::vector<int8_t, 32> y1 = aie::load_v<32>(py); py += 32;
+    aie::vector<int8_t, 32> y2 = aie::load_v<32>(py); py += 32;
+    aie::vector<int8_t, 32> y3 = aie::load_v<32>(py); py += 32;
+
+    // Multiply and accumulate
+    acc = aie::mac(acc, w0, y0);
+    acc = aie::mac(acc, w1, y1);
+    acc = aie::mac(acc, w2, y2);
+    acc = aie::mac(acc, w3, y3);
+  }
+
+  int32_t sum = aie::reduce_add(acc.to_vector<int32_t>(0));
+  *s = (float)sum;
+}
+
+void dot_product_i2_i8_2560(uint8_t *vx, int8_t *vy, float *s) {
+    dot_product_i2_i8(2560, vx, vy, s);
+}
+
+void dot_product_i2_i8_6912(uint8_t *vx, int8_t *vy, float *s) {
+    dot_product_i2_i8(6912, vx, vy, s);
+}
+
 } // extern "C"
