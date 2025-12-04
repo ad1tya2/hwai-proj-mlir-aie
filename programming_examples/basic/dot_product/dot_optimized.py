@@ -167,6 +167,11 @@ def my_dot_optimized(dev, num_elements, trace_size):
         # Drain out1 <- L2
         rt.drain(of_out1_L2.cons(), C1, tap_out1, wait=True, task_group=tg)
         
+        # Explicitly register intermediate FIFOs with Runtime so they are seen by the Placer
+        # This is necessary because they are not used in fill/drain
+        rt._fifos.add(of_in1_L2_1.prod())
+        rt._fifos.add(of_in2_L2_1.prod())
+        
         rt.finish_task_group(tg)
 
     return Program(dev, rt).resolve_program(SequentialPlacer())
