@@ -121,8 +121,8 @@ int main(int argc, const char *argv[]) {
   int trace_size = vm["trace_sz"].as<int>();
   int vector_size = vm["size"].as<int>();
 
-  // 1 column per kernel
-  int num_columns = 1;
+  // 4 columns per kernel
+  int num_columns = 4;
   // 5 concurrent kernels
   int num_jobs = 5;
   
@@ -245,17 +245,21 @@ int main(int argc, const char *argv[]) {
               bo_outC_v[j].sync(XCL_BO_SYNC_BO_FROM_DEVICE);
               
               int errors = 0;
-              // Only 1 column now
-              float total_sum = bufOutC_v[j][0];
-              float ref_sum = 0;
-              
-              ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, 0, bufInA_v[j], 0, activations_v[j].data(), 0, 0);
-              
-              if (std::abs(total_sum - ref_sum) > 1e-3) {
-                  std::cout << "Verification failed for job " << j << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
-                  errors++;
+              for(int col=0; col<num_columns; col++) {
+                  float total_sum = bufOutC_v[j][col];
+                  float ref_sum = 0;
+                  
+                  // Calculate ref sum for this column
+                  int offset = col * INPUT_VOLUME;
+                  int offset_packed = col * (INPUT_VOLUME / 4);
+                  
+                  ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, 0, bufInA_v[j] + offset_packed, 0, activations_v[j].data() + offset, 0, 0);
+                  
+                  if (std::abs(total_sum - ref_sum) > 1e-3) {
+                      std::cout << "Verification failed for job " << j << " column " << col << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
+                      errors++;
+                  }
               }
-              
               if (errors > 0) return 1;
           }
           if (verbosity > 0) std::cout << "Verification passed for all jobs." << std::endl;

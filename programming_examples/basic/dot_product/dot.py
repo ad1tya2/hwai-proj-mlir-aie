@@ -15,7 +15,7 @@ from aie.helpers.taplib.tap import TensorAccessPattern
 from aie.iron.controlflow import range_
 
 def my_dot_product(dev, kernel_size):
-    num_columns = 1
+    num_columns = 4
     per_tile_elements = kernel_size
     
     # Total elements processed per round (across all columns)
@@ -29,7 +29,7 @@ def my_dot_product(dev, kernel_size):
     # For BitNet:
     # Input 1 (weights): 2-bit packed -> 1 byte holds 4 elements.
     # Size in bytes = per_tile_elements / 4.
-    # Input 2 (activations): 8-bit -> 1 element holds 1 byte.
+    # Input 2 (activations): 8-bit -> 1 byte holds 1 element.
     # Size in bytes = per_tile_elements.
     
     chunk_in_1 = per_tile_elements // 4
@@ -49,9 +49,9 @@ def my_dot_product(dev, kernel_size):
     tile_out_ty = np.ndarray[(1,), np.dtype[np.float32]]
 
     # AIE-array data movement with object fifos
-    of_in1 = ObjectFifo(tile_in1_ty, name="in1")
-    of_in2 = ObjectFifo(tile_in2_ty, name="in2")
-    of_out = ObjectFifo(tile_out_ty, name="out")
+    of_in1s = [ObjectFifo(tile_in1_ty, name=f"in1_{i}") for i in range(num_columns)]
+    of_in2s = [ObjectFifo(tile_in2_ty, name=f"in2_{i}") for i in range(num_columns)]
+    of_outs = [ObjectFifo(tile_out_ty, name=f"out_{i}") for i in range(num_columns)]
 
     # Select kernel function based on size
     if kernel_size == 2560:
@@ -79,70 +79,84 @@ def my_dot_product(dev, kernel_size):
             of_out.release(1)
 
     # Create a worker to run the task on a compute tile
-    my_worker = Worker(
-        core_body,
-        [
-            of_in1.cons(),
-            of_in2.cons(),
-            of_out.prod(),
-            dot_kernel,
-        ],
-    )
+    my_workers = [
+        Worker(
+            core_body,
+            [
+                of_in1s[i].cons(),
+                of_in2s[i].cons(),
+                of_outs[i].prod(),
+                dot_kernel,
+            ],
+        )
+        for i in range(num_columns)
+    ]
 
     # Create a TensorAccessPattern for each channel
     # Input 1 pattern: distribute chunks to columns (packed weights)
-    taps_in1 = TensorAccessPattern(
-        (1, num_elements // 4),
-        0,
-        [1, chunk_in_1],
-        [0, 1],
-    )
+    taps_in1 = [
+        TensorAccessPattern(
+            (1, num_elements // 4),
+            chunk_in_1 * i,
+            [1, chunk_in_1],
+            [0, 1],
+        )
+        for i in range(num_columns)
+    ]
     
     # Input 2 pattern: distribute chunks to columns (activations)
-    taps_in2 = TensorAccessPattern(
-        (1, num_elements),
-        0,
-        [1, chunk_in_2],
-        [0, 1],
-    )
+    taps_in2 = [
+        TensorAccessPattern(
+            (1, num_elements),
+            chunk_in_2 * i,
+            [1, chunk_in_2],
+            [0, 1],
+        )
+        for i in range(num_columns)
+    ]
     
     # Output pattern: gather results from columns
-    taps_out = TensorAccessPattern(
-        (1, num_columns),
-        0,
-        [1, 1],
-        [0, 1],
-    )
+    taps_out = [
+        TensorAccessPattern(
+            (1, num_columns),
+            1 * i,
+            [1, 1],
+            [0, 1],
+        )
+        for i in range(num_columns)
+    ]
 
     # Runtime operations to move data to/from the AIE-array
     rt = Runtime()
     with rt.sequence(tensor_in1_ty, tensor_in2_ty, tensor_out_ty) as (A, B, C):
-        rt.start(my_worker)
+        rt.start(*my_workers)
 
         # Initialize a group for parallel drain tasks
         tg = rt.task_group()
 
         # Fill the input objectFIFOs with data
-        rt.fill(
-            of_in1.prod(),
-            A,
-            taps_in1,
-            task_group=tg,
-        )
-        rt.fill(
-            of_in2.prod(),
-            B,
-            taps_in2,
-            task_group=tg,
-        )
+        for i in range(num_columns):
+            rt.fill(
+                of_in1s[i].prod(),
+                A,
+                taps_in1[i],
+                task_group=tg,
+            )
+            rt.fill(
+                of_in2s[i].prod(),
+                B,
+                taps_in2[i],
+                task_group=tg,
+            )
         # Drain the output objectFIFOs with data
-        rt.drain(
-            of_out.cons(),
-            C,
-            taps_out,
-            wait=True,
-            task_group=tg,
-        )
+        for i in range(num_columns):
+            rt.drain(
+                of_outs[i].cons(),
+                C,
+                taps_out[i],
+                wait=True,
+                task_group=tg,
+            )
         rt.finish_task_group(tg)
 
     # Place program components and generate an MLIR module
