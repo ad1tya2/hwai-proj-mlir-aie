@@ -96,7 +96,7 @@ void dot_product_bf16_scalar(bfloat16 *a_in, bfloat16 *b_in, bfloat16 *c_out) {
 // 2560 / 16 = 160 iterations.
 // Unroll by 4 -> 40 iterations.
 void dot_product_2560(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
-  aie::vector<int32_t, 16> acc = aie::zeros<int32_t, 16>();
+  aie::accum<acc64, 16> acc = aie::zeros<acc64, 16>();
   int32_t *__restrict pA = a_in;
   int32_t *__restrict pB = b_in;
 
@@ -118,7 +118,7 @@ void dot_product_2560(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
     acc = aie::mac(acc, A3, B3);
   }
 
-  *c_out = aie::reduce_add(acc);
+  *c_out = aie::reduce_add(acc.to_vector<int32_t>(0));
 }
 
 // Optimized kernel for size 6912
@@ -126,7 +126,7 @@ void dot_product_2560(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
 // 6912 / 16 = 432 iterations.
 // Unroll by 4 -> 108 iterations.
 void dot_product_6912(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
-  aie::vector<int32_t, 16> acc = aie::zeros<int32_t, 16>();
+  aie::accum<acc64, 16> acc = aie::zeros<acc64, 16>();
   int32_t *__restrict pA = a_in;
   int32_t *__restrict pB = b_in;
 
@@ -148,7 +148,7 @@ void dot_product_6912(int32_t *a_in, int32_t *b_in, int32_t *c_out) {
     acc = aie::mac(acc, A3, B3);
   }
 
-  *c_out = aie::reduce_add(acc);
+  *c_out = aie::reduce_add(acc.to_vector<int32_t>(0));
 }
 
 } // extern "C"
