@@ -70,8 +70,7 @@ run: all
 	./$(host_target) -i ${dot_insts_target} -x ${dot_xclbin_target} -k MLIR_AIE
 
 .PHONY: perf
-perf: all
-	./$(host_target) -i ${dot_insts_target} -x ${dot_xclbin_target} -k MLIR_AIE --iters 100 --verify false --warmup 10
+perf: perf_4col
 
 # Optimized targets
 mlir_aie_dot_opt?=build/aie_dot_opt.mlir
