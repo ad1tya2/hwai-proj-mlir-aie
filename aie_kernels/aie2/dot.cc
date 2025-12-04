@@ -194,11 +194,11 @@ void dot_product_i2_i8(int32_t n, uint8_t *vx, int8_t *vy, float *s) {
     aie::vector<uint8_t, 32> mask = aie::broadcast<uint8_t, 32>(0x3);
     
     // Bits 6-7: >> 6
-    aie::vector<uint8_t, 32> w0_u = aie::bit_and(aie::upshift(v_packed, 6), mask);
+    aie::vector<uint8_t, 32> w0_u = aie::bit_and(v_packed >> 6, mask);
     // Bits 4-5: >> 4
-    aie::vector<uint8_t, 32> w1_u = aie::bit_and(aie::upshift(v_packed, 4), mask);
+    aie::vector<uint8_t, 32> w1_u = aie::bit_and(v_packed >> 4, mask);
     // Bits 2-3: >> 2
-    aie::vector<uint8_t, 32> w2_u = aie::bit_and(aie::upshift(v_packed, 2), mask);
+    aie::vector<uint8_t, 32> w2_u = aie::bit_and(v_packed >> 2, mask);
     // Bits 0-1: >> 0
     aie::vector<uint8_t, 32> w3_u = aie::bit_and(v_packed, mask);
 

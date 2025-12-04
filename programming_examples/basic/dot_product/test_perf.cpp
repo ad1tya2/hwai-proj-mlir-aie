@@ -69,11 +69,24 @@ size_t quantize_i2_s_ref(const float * src, void * dst,
     return (size_t) (n / 4);
 }
 
-void ggml_vec_dot_i2_i8_s(int n, float * s, const void * vx,  const void * vy) {
+#define QK_I2_S 128
+
+void ggml_vec_dot_i2_i8_s(int n, float * s, size_t bs, const void * vx, size_t bx, const void * vy, size_t by, int nrc) {
+    (void) bs;
+    (void) bx;
+    (void) by;
+    (void) nrc;
+
+    // original SIMD kernels ignore offsets and treat pointers as already
+    // pointing to the start of the relevant block
     const uint8_t * x = (const uint8_t *) vx;
     const int8_t  * y = (const int8_t  *) vy;
 
     long long acc = 0;
+
+    // total number of 128-element blocks
+    const int nb = n / QK_I2_S; // same as original: nb = n / 128
+    (void) nb;
 
     for (int idx = 0; idx < n; ++idx) {
         // decode the 2-bit q8 for element idx using the same layout as quantize
@@ -85,7 +98,10 @@ void ggml_vec_dot_i2_i8_s(int n, float * s, const void * vx,  const void * vy) {
         const uint8_t packed = x[byte_index];
         const uint8_t q8 = (packed >> (6 - 2 * group_idx)) & 0x3u; // 2-bit value 0,1,2
 
+        // original SIMD kernels operate directly on 0,1,2 codes without
+        // mapping them to -1,0,1 here
         acc += (long long) q8 * (long long) y[idx];
+        //normally and without long long see 
     }
 
     if (s) *s = (float) acc;
@@ -104,6 +120,8 @@ int main(int argc, const char *argv[]) {
   int n_warmup_iterations = vm["warmup"].as<int>();
   int trace_size = vm["trace_sz"].as<int>();
   int vector_size = vm["size"].as<int>();
+  
+  std::cout << "Running test_perf with 4 columns" << std::endl;
 
   // 4 columns
   int num_columns = 4;
@@ -213,7 +231,7 @@ int main(int argc, const char *argv[]) {
               int offset = col * INPUT_VOLUME;
               int offset_packed = col * (INPUT_VOLUME / 4);
               
-              ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, bufInA + offset_packed, activations.data() + offset);
+              ggml_vec_dot_i2_i8_s(INPUT_VOLUME, &ref_sum, 0, bufInA + offset_packed, 0, activations.data() + offset, 0, 0);
               
               if (std::abs(total_sum - ref_sum) > 1e-3) {
                   std::cout << "Verification failed for column " << col << "! Expected " << ref_sum << ", got " << total_sum << std::endl;
