@@ -850,19 +850,125 @@ static inline void matmul_vectorized_4x8x8_i8_i32(const int8 *__restrict pA,
   constexpr int r = 4;
   constexpr int s = 8;
   constexpr int t = 8;
+// These dimensions must be divisible by the r, s, t dimensions used in
+// the kernels.
+
+#ifndef DIM_M
+#define DIM_M 64
+#endif
+
+#ifndef DIM_K
+#define DIM_K 64
+#endif
+
+#ifndef DIM_N
+#define DIM_N 64
+#endif
+
+#ifdef i8_i8_ONLY
+#define combos(X) X(int8, i8, int8, i8, 4, 8, 8)
+#endif
+
+#ifdef i8_i16_ONLY
+#define combos(X) X(int8, i8, int16, i16, 4, 8, 8)
+#endif
+
+#ifdef i8_i32_ONLY
+#define combos(X) X(int8, i8, int32, i32, 4, 8, 8)
+#endif
+
+#ifdef i16_i16_ONLY
+#define combos(X) X(int16, i16, int16, i16, 4, 4, 4)
+#endif
+
+#ifdef i16_i32_ONLY
+#define combos(X) X(int16, i16, int32, i32, 4, 4, 4)
+#endif
+
+#ifdef bf16_bf16_ONLY
+#define combos(X) X(bfloat16, bf16, bfloat16, bf16, 4, 8, 4)
+#endif
+
+  static_assert(n % (2 * t) == 0);
+
+  return matmul_vectorized_2x2_mmul<int16, int32, (m / r), (k / s), (n / t), r,
+                                    s, t, is_b_row_maj, is_c_row_maj>(pA, pB,
+                                                                      pC);
+}
+
+template <unsigned m, unsigned k, unsigned n>
+static inline void
+matmul_vectorized_4x8x4_bf16_bf16(const bfloat16 *__restrict pA,
+                                  const bfloat16 *__restrict pB,
+                                  bfloat16 *__restrict pC) {
+  constexpr int r = 4;
+  constexpr int s = 8;
+  constexpr int t = 4;
+
+  static_assert(m % (4 * r) == 0);
+  static_assert(k % s == 0);
+  static_assert(n % (4 * t) == 0);
+
+  return matmul_vectorized_4x4<bfloat16, bfloat16, (m / r), (k / s), (n / t), r,
+                               s, t, is_b_row_maj, is_c_row_maj>(pA, pB, pC);
+}
+
+template <unsigned m, unsigned k, unsigned n>
+static inline void
+matmul_vectorized_4x8x4_bf16_f32(const bfloat16 *__restrict pA,
+                                 const bfloat16 *__restrict pB,
+                                 float *__restrict pC) {
+  constexpr int r = 4;
+  constexpr int s = 8;
+  constexpr int t = 4;
+
+  static_assert(m % (4 * r) == 0);
+  static_assert(k % s == 0);
+  static_assert(n % (4 * t) == 0);
+
+  return matmul_vectorized_4x4<bfloat16, float, (m / r), (k / s), (n / t), r, s,
+                               t, is_b_row_maj, is_c_row_maj>(pA, pB, pC);
+}
+
+template <unsigned m, unsigned k, unsigned n>
+static inline void matmul_vectorized_4x8x8_i8_i8(const int8 *__restrict pA,
+                                                 const int8 *__restrict pB,
+                                                 int8 *__restrict pC) {
+  constexpr int r = 4;
+  constexpr int s = 8;
+  constexpr int t = 8;
 
   static_assert(m % (4 * r) == 0);
   static_assert(k % s == 0);
   static_assert(n % (2 * t) == 0);
 
-  return matmul_vectorized_4x2_mmul<int8, int32, (m / r), (k / s), (n / t), r,
+  return matmul_vectorized_4x2_mmul<int8, int8, (m / r), (k / s), (n / t), r, s,
+                                    t, is_b_row_maj, is_c_row_maj>(pA, pB, pC);
+}
+
+template <unsigned m, unsigned k, unsigned n>
+static inline void matmul_vectorized_4x8x8_i8_i16(const int8 *__restrict pA,
+                                                  const int8 *__restrict pB,
+                                                  int16 *__restrict pC) {
+  constexpr int r = 4;
+  constexpr int s = 8;
+  constexpr int t = 8;
+
+  static_assert(m % (4 * r) == 0);
+  static_assert(k % s == 0);
+  static_assert(n % (2 * t) == 0);
+
+  return matmul_vectorized_4x2_mmul<int8, int16, (m / r), (k / s), (n / t), r,
                                     s, t, is_b_row_maj>(pA, pB, pC);
 }
 
-extern "C" {
-
-// If you want to compile microkernels with different inner tile sizes,
-// define DIM_M, DIM_K and DIM_N at compile time using -DDIM_M 32 etc.
+template <unsigned m, unsigned k, unsigned n>
+static inline void matmul_vectorized_4x8x8_i8_i32(const int8 *__restrict pA,
+                                                  const int8 *__restrict pB,
+                                                  int32 *__restrict pC) {
+  constexpr int r = 4;
+  constexpr int s = 8;
+  constexpr int t = 8;
 // These dimensions must be divisible by the r, s, t dimensions used in
 // the kernels.
 
@@ -945,6 +1051,11 @@ extern "C" {
 
 #ifndef SCALAR_ONLY
 combos(matmul_vectorized_c_func) combos(zero_vectorized_c_func)
+
+// Manual wrapper for i2_i32 since it doesn't fit the macro pattern perfectly (or we can add it to combos if we define i2 type)
+void matmul_i2_i32(int8 *a_in, int8 *b_in, int32 *c_out) {
+    matmul_vectorized_4x8x8_i2_i8<DIM_M, DIM_K, DIM_N>(a_in, b_in, c_out);
+}
 #endif
 #ifndef VECTORIZED_ONLY
     combos(matmul_scalar_c_func) combos(zero_scalar_c_func)

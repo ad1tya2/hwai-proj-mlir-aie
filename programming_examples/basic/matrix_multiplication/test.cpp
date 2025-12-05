@@ -87,6 +87,9 @@ int main(int argc, const char *argv[]) {
   int C_VOLUME = M * N;
 
   size_t A_SIZE = (A_VOLUME * sizeof(A_DATATYPE));
+#ifdef DTYPE_IN_IS_I2
+  A_SIZE /= 4;
+#endif
   size_t B_SIZE = (B_VOLUME * sizeof(B_DATATYPE));
   size_t C_SIZE = (C_VOLUME * sizeof(C_DATATYPE));
 
@@ -158,12 +161,58 @@ int main(int argc, const char *argv[]) {
     std::cout << "Writing data into buffer objects.\n";
   }
 
+#ifdef DTYPE_IN_IS_I2
+  // For i2, we generate random 0,1,2 in AVec (unpacked), then pack into bufA
+  std::vector<A_DATATYPE> AVec(A_VOLUME);
+  for (int i = 0; i < A_VOLUME; i++) {
+    AVec[i] = (A_DATATYPE)(rand() % 3);
+  }
+  
+  // Pack AVec into bufA
+  // 4 elements per byte. 
+  // Layout: 0,1,2,3 -> Byte 0. 
+  // Byte 0 = (Val0) | (Val1 << 2) | (Val2 << 4) | (Val3 << 6)
+  // Note: This must match the unpacking logic in the kernel!
+  // Kernel unpacking:
+  // t1 = interleave(v, v) -> 0 0 1 1 ...
+  // t2 = interleave(t1, t1) -> 0 0 0 0 1 1 1 1 ...
+  // shift: 0, 2, 4, 6
+  // This implies:
+  // Lane 0 gets bits 0-1
+  // Lane 1 gets bits 2-3
+  // Lane 2 gets bits 4-5
+  // Lane 3 gets bits 6-7
+  // So Element 0 is at bits 0-1, Element 1 at 2-3, etc.
+  // This matches standard little-endian packing.
+  
+  A_DATATYPE *bufA = bo_a.map<A_DATATYPE *>();
+  memset(bufA, 0, A_SIZE); // A_SIZE is already adjusted? No, wait.
+  
+  // We need to adjust A_SIZE for allocation.
+  // But A_SIZE was calculated as A_VOLUME * sizeof(A_DATATYPE).
+  // If A_DATATYPE is int8, A_SIZE is full size.
+  // But we allocated bo_a with A_SIZE.
+  // If we want packed transfer, bo_a should be 1/4 size.
+  // I need to change A_SIZE calculation earlier.
+  
+  // Let's assume I change A_SIZE calculation below.
+  // Here I just pack.
+  uint8_t* bufAPacked = (uint8_t*)bufA;
+  for (int i = 0; i < A_VOLUME / 4; i++) {
+      uint8_t val = 0;
+      for (int j = 0; j < 4; j++) {
+          val |= (AVec[i*4 + j] & 0x3) << (j*2);
+      }
+      bufAPacked[i] = val;
+  }
+#else
   A_DATATYPE *bufA = bo_a.map<A_DATATYPE *>();
   std::vector<A_DATATYPE> AVec(A_VOLUME);
   for (int i = 0; i < A_VOLUME; i++) {
     AVec[i] = matmul_common::get_random<A_DATATYPE>();
   }
   memcpy(bufA, AVec.data(), (AVec.size() * sizeof(A_DATATYPE)));
+#endif
   B_DATATYPE *bufB = bo_b.map<B_DATATYPE *>();
   std::vector<B_DATATYPE> BVec(B_VOLUME);
   for (int i = 0; i < B_VOLUME; i++) {
